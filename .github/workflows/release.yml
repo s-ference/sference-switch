@@ -1,0 +1,181 @@
+name: Publish beta release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact signed v<major>.<minor>.<patch> tag to build
+        required: true
+        type: string
+      build_number:
+        description: Period-separated numeric macOS bundle build number
+        required: true
+        type: string
+      approved_license_spdx:
+        description: SPDX identifier approved for the repository license
+        required: true
+        type: string
+
+permissions: read-all
+
+concurrency:
+  group: release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Build, attest, and publish beta prerelease
+    runs-on: macos-15
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out the selected tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
+
+      - name: Verify exact signed release tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG_SIGNING_PUBLIC_KEY: ${{ vars.RELEASE_TAG_SIGNING_PUBLIC_KEY }}
+          RELEASE_TAG_SIGNING_PRINCIPAL: ${{ vars.RELEASE_TAG_SIGNING_PRINCIPAL }}
+          RELEASE_TAG_SIGNING_FINGERPRINT: ${{ vars.RELEASE_TAG_SIGNING_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { printf 'release tag must match v<major>.<minor>.<patch>\n' >&2; exit 1; }
+          [[ "$(git cat-file -t "refs/tags/$RELEASE_TAG")" == tag ]] \
+            || { printf 'release tag must be an annotated signed tag\n' >&2; exit 1; }
+          for value in \
+            "$RELEASE_TAG_SIGNING_PUBLIC_KEY" \
+            "$RELEASE_TAG_SIGNING_PRINCIPAL" \
+            "$RELEASE_TAG_SIGNING_FINGERPRINT"; do
+            [[ -n "$value" ]] \
+              || { printf 'release tag SSH verification values are required\n' >&2; exit 1; }
+          done
+          [[ "$RELEASE_TAG_SIGNING_PUBLIC_KEY" != *$'\n'* ]] \
+            || { printf 'release tag signing public key must be a single line\n' >&2; exit 1; }
+          [[ "$RELEASE_TAG_SIGNING_PRINCIPAL" =~ ^[A-Za-z0-9._@+-]+$ ]] \
+            || { printf 'release tag signing principal is invalid\n' >&2; exit 1; }
+
+          signing_key="$RUNNER_TEMP/release-tag-signing-key.pub"
+          allowed_signers="$RUNNER_TEMP/release-tag-allowed-signers"
+          printf '%s\n' "$RELEASE_TAG_SIGNING_PUBLIC_KEY" >"$signing_key"
+          actual_fingerprint="$(ssh-keygen -lf "$signing_key" -E sha256 | awk '{print $2}')"
+          [[ -n "$actual_fingerprint" \
+            && "$actual_fingerprint" == "$RELEASE_TAG_SIGNING_FINGERPRINT" ]] \
+            || { printf 'release tag signing key fingerprint is not approved\n' >&2; exit 1; }
+          printf '%s %s\n' \
+            "$RELEASE_TAG_SIGNING_PRINCIPAL" \
+            "$RELEASE_TAG_SIGNING_PUBLIC_KEY" >"$allowed_signers"
+          git config gpg.format ssh
+          git config gpg.ssh.allowedSignersFile "$allowed_signers"
+          git verify-tag "$RELEASE_TAG"
+          [[ "$(git rev-parse "HEAD^{commit}")" == "$(git rev-parse "${RELEASE_TAG}^{commit}")" ]] \
+            || { printf 'checkout is not the selected tag commit\n' >&2; exit 1; }
+          [[ "$(git describe --tags --exact-match HEAD)" == "$RELEASE_TAG" ]] \
+            || { printf 'HEAD is not exactly the selected tag\n' >&2; exit 1; }
+
+      - name: Run repository release gate
+        run: scripts/check.sh --offline
+
+      - name: Verify release workflow and formula contracts
+        run: |
+          scripts/release/test-release-workflow.sh
+          scripts/release/test-render-formula.sh
+
+      - name: Build ad-hoc signed beta release assets
+        env:
+          SFERENCE_SWITCH_RELEASE_TAG: ${{ inputs.release_tag }}
+          SFERENCE_SWITCH_BUILD_NUMBER: ${{ inputs.build_number }}
+          SFERENCE_SWITCH_RELEASE_SIGNING_MODE: adhoc
+        run: scripts/release/build-artifacts.sh
+
+      - name: Scan release archive for secrets
+        env:
+          GITLEAKS_MAX_ARCHIVE_DEPTH: "2"
+        run: scripts/security/run-gitleaks.sh dist
+
+      - name: Render checksum-pinned Homebrew formula and patch
+        id: formula
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          APPROVED_LICENSE_SPDX: ${{ inputs.approved_license_spdx }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          artifact_name="sference-switch_${version}_darwin_universal.zip"
+          artifact="dist/$artifact_name"
+          artifact_sha256="$(
+            awk -v artifact="$artifact_name" '$2 == artifact { print $1 }' dist/checksums.txt
+          )"
+          [[ "$artifact_sha256" =~ ^[[:xdigit:]]{64}$ ]] \
+            || { printf 'final artifact checksum is missing from checksums.txt\n' >&2; exit 1; }
+
+          tap_stage="$GITHUB_WORKSPACE/dist/homebrew-tap"
+          formula="$tap_stage/Formula/sference-switch.rb"
+          patch="dist/sference-switch_${version}_homebrew.patch"
+          scripts/release/render-formula.sh \
+            --tag "$RELEASE_TAG" \
+            --sha256 "$artifact_sha256" \
+            --approved-license-spdx "$APPROVED_LICENSE_SPDX" \
+            --output "$formula" \
+            --patch-output "$patch"
+          {
+            printf 'artifact=%s\n' "$artifact"
+            printf 'formula=%s\n' "$formula"
+            printf 'patch=%s\n' "$patch"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Attest the exact final ZIP
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: ${{ steps.formula.outputs.artifact }}
+
+      - name: Preserve formula and tap patch as workflow artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sference-switch-${{ inputs.release_tag }}-homebrew
+          path: |
+            ${{ steps.formula.outputs.formula }}
+            ${{ steps.formula.outputs.patch }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create public beta prerelease without replacing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            printf 'release already exists for %s; refusing to replace or add assets\n' \
+              "$RELEASE_TAG" >&2
+            exit 1
+          fi
+          version="${RELEASE_TAG#v}"
+          gh release create "$RELEASE_TAG" \
+            "dist/sference-switch_${version}_darwin_universal.zip" \
+            "dist/checksums.txt" \
+            --prerelease \
+            --verify-tag \
+            --title "Sference Switch $RELEASE_TAG (Beta)" \
+            --notes-from-tag
+
+      - name: Remove ephemeral tag verification files
+        if: always()
+        run: |
+          rm -f \
+            "$RUNNER_TEMP/release-tag-signing-key.pub" \
+            "$RUNNER_TEMP/release-tag-allowed-signers"
