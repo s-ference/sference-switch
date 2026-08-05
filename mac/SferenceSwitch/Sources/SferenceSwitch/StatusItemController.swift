@@ -99,8 +99,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
 
         let headerItem = NSMenuItem()
-        headerItem.title = "Global routing"
-        let toggle = globalRoutingTogglePresentation(
+        headerItem.title = "Switch"
+        let toggle = proxyTogglePresentation(
             state: state,
             isPreviewFixture: isPreview)
         let header = StatusMenuHeaderView(
@@ -111,7 +111,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             switchEnabled: toggle.isEnabled,
             disabledReason: toggle.disabledReason,
             onToggle: { [weak self] enabled in
-                self?.changeGlobalRouting(enabled) ?? false
+                self?.changeProxyEnabled(enabled) ?? false
             })
         headerItem.view = header
         headerView = header
@@ -161,10 +161,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private var headerSubtitle: String {
-        if let pending = state.pendingGlobalRouting {
-            return pending.phase == .applying
-                ? "Applying routing change…"
-                : "Reconciling routing change…"
+        if state.proxyPending {
+            return "Updating switch…"
         }
         if case .previewMismatch = state.runtimeTrust {
             return "Preview runtime needs attention"
@@ -178,16 +176,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if authNeedsReauth(auth: state.auth) {
             return "Authentication required"
         }
-        return state.confirmedGlobalRoutingEnabled
-            ? "Routing rules are active"
-            : "Native providers only"
+        return state.proxyEnabled
+            ? "Switch enabled"
+            : "Switch disabled"
     }
 
     /// Updating labels and control state in the existing custom header is
     /// safe while AppKit tracks the menu. Structure and item geometry remain
     /// untouched, so keyboard selection and submenu placement stay stable.
     private func updateTrackedHeader() {
-        let toggle = globalRoutingTogglePresentation(
+        let toggle = proxyTogglePresentation(
             state: state,
             isPreviewFixture: isPreview)
         headerView?.update(
@@ -342,9 +340,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Actions
 
-    private func changeGlobalRouting(_ enabled: Bool) -> Bool {
+    private func changeProxyEnabled(_ enabled: Bool) -> Bool {
         guard !isPreview else { return false }
-        return state.requestGlobalRouting(enabled)
+        return state.requestProxyEnabled(enabled)
     }
 
     @objc private func reauthenticate() {
@@ -383,11 +381,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Status icon
 
     private func updateIconIfNeeded() {
-        let projected = menubarIconState(
-            gatewayUp: state.gatewayUp,
-            globalRoutingEnabled: state.confirmedGlobalRoutingEnabled,
-            clients: state.clients,
-            auth: state.auth)
+        let projected: MenubarIconState
+        if state.proxyPending {
+            projected = .degraded
+        } else if state.proxyEnabled && state.gatewayUp {
+            projected = .active
+        } else {
+            projected = .off
+        }
         guard projected != displayedIconState else { return }
         displayedIconState = projected
         statusItem.button?.image = SferenceSwitchApp.menubarIcon(
@@ -517,6 +518,26 @@ func globalRoutingTogglePresentation(
                 && state.pendingGlobalRouting == nil),
         accessibilityStatus: status,
         disabledReason: state.routingMutationDisabledReason)
+}
+
+@MainActor
+func proxyTogglePresentation(
+    state: SferenceSwitchState,
+    isPreviewFixture: Bool
+) -> GlobalRoutingTogglePresentation {
+    let status: String
+    if state.proxyPending {
+        status = "Updating"
+    } else if state.proxyChecking {
+        status = "Checking"
+    } else {
+        status = state.proxyEnabled ? "On" : "Off"
+    }
+    return GlobalRoutingTogglePresentation(
+        isOn: state.proxyEnabled,
+        isEnabled: isPreviewFixture || !state.proxyPending,
+        accessibilityStatus: status,
+        disabledReason: nil)
 }
 
 @MainActor
@@ -691,7 +712,7 @@ final class StatusHeaderToggleControl: NSButton {
         setAccessibilityIdentifier(accessibilityIdentifier)
         // AppKit exposes NSSwitch to accessibility as a check box.
         setAccessibilityRole(.checkBox)
-        setAccessibilityLabel("Global routing")
+        setAccessibilityLabel("Switch enabled")
         configureLayers()
         synchronize()
     }

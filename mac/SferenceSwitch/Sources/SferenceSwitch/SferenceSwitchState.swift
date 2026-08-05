@@ -79,6 +79,15 @@ final class SferenceSwitchState: ObservableObject {
     @Published private(set) var pendingReasoning: PendingReasoningMutation?
     @Published private(set) var reasoningWarnings: [String: String] = [:]
 
+    // MARK: Proxy (transparent interception) state
+    /// Whether the transparent proxy is enabled: the /etc/hosts block is
+    /// present AND the :443 TLS door daemon is installed. Read from
+    /// `intercept status` (hosts file only, no sudo required) plus the
+    /// daemon presence.
+    @Published private(set) var proxyEnabled = false
+    @Published private(set) var proxyChecking = false
+    @Published private(set) var proxyPending = false
+
     private let reader: any AdminStatusReading
     private let modelCatalogReader: any ModelCatalogReading
     private let reasoningPreflightReader: any ReasoningPreflightReading
@@ -270,6 +279,7 @@ final class SferenceSwitchState: ObservableObject {
     func menuDidShow() {
         menuVisible = true
         requestInteractiveRefresh(includeStats: true)
+        Task { await refreshProxyState() }
     }
 
     func menuDidHide() {
@@ -446,6 +456,82 @@ final class SferenceSwitchState: ObservableObject {
         guard beginGlobalRouting(enabled) else { return false }
         Task { await finishGlobalRouting(enabled) }
         return true
+    }
+
+    // MARK: - Proxy enable / disable
+
+    /// Returns true if the proxy-change request was accepted and will run
+    /// (including the macOS admin password prompt).
+    func requestProxyEnabled(_ enabled: Bool) -> Bool {
+        guard !proxyPending,
+              proxyEnabled != enabled else { return false }
+        proxyPending = true
+        Task { await setProxyEnabled(enabled) }
+        return true
+    }
+
+    private func setProxyEnabled(_ enabled: Bool) async {
+        defer { proxyPending = false }
+        guard let binary = Self.locateSferenceSwitchBinary(variant: variant) else {
+            lastError = "sference-switch binary not found."
+            return
+        }
+        // The commands that flip the transparent proxy. Installing the
+        // LaunchDaemon and toggling /etc/hosts both need root.
+        let enableArgs: [[String]]
+        let disableArgs: [[String]]
+        if enabled {
+            enableArgs = [
+                ["tls", "service", "install"],
+                ["intercept", "on"],
+            ]
+            disableArgs = []
+        } else {
+            enableArgs = []
+            disableArgs = [
+                ["intercept", "off"],
+                ["tls", "service", "uninstall"],
+            ]
+        }
+        let steps = enabled ? enableArgs : disableArgs
+        for command in steps {
+            let result = await runElevated(
+                binary: binary,
+                arguments: command,
+                timeout: 60)
+            if !result.succeeded {
+                lastError = "Proxy change failed: \(result.standardError)"
+                await refreshProxyState()
+                return
+            }
+        }
+        await refreshProxyState()
+    }
+
+    /// Refreshes the proxy-enabled flag in the background without needing
+    /// sudo: `intercept status` reads only the hosts file.
+    func refreshProxyState() async {
+        guard let binary = Self.locateSferenceSwitchBinary(variant: variant) else { return }
+        proxyChecking = true
+        let result = await executeCLI(
+            ["intercept", "status"],
+            timeout: 5,
+            allowWhenPreviewDown: true)
+        proxyChecking = false
+        proxyEnabled = result.standardOutput.contains("intercept: on")
+    }
+
+    private func runElevated(
+        binary: URL,
+        arguments: [String],
+        timeout: TimeInterval
+    ) async -> CLIExecutionResult {
+        let runner = ElevatedCLIRunner()
+        return await runner.run(CLIExecutionRequest(
+            binary: binary,
+            arguments: arguments,
+            environment: [:],
+            timeout: timeout))
     }
 
     func setAllRoutesThroughSference(_ enabled: Bool) async {

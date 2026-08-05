@@ -336,6 +336,85 @@ actor MutationCoordinator {
     }
 }
 
+/// Runs a CLI invocation with Administrator privileges via `osascript`
+/// `do shell script ... with administrator privileges`.
+///
+/// The transparent-interception commands (`intercept on|off`,
+/// `tls service install|uninstall`) write `/etc/hosts` and install or unload a
+/// root LaunchDaemon, which a sandboxed or ordinary menubar process cannot
+/// do directly. The standard macOS behaviour is to prompt for the user's
+/// password once per invocation; `osascript` shows that dialog synchronously.
+///
+/// The invoked script is a single `sudo` call so the auth prompt authorises
+/// exactly that command. The command string is built from the CLI binary and
+/// arguments, quoting each argument for AppleScript.
+struct ElevatedCLIRunner: CLIRunning {
+    private let osascriptPath = "/usr/bin/osascript"
+
+    func run(_ request: CLIExecutionRequest) async -> CLIExecutionResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: osascriptPath)
+        process.arguments = ["-e", appleScriptCommand(binary: request.binary, arguments: request.arguments)]
+        return await runProcess(process)
+    }
+
+    private func appleScriptCommand(binary: URL, arguments: [String]) -> String {
+        // The command that osascript runs with Administrator privileges.
+        let shellCmd = [binary.path] + arguments
+        let quoted = shellCmd.map { singleQuote($0) }.joined(separator: " ")
+        return "do shell script \"" + escapedForString(quoted) + "\" with administrator privileges"
+    }
+
+    private func singleQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func escapedForString(_ s: String) -> String {
+        s.replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\\", with: "\\\\")
+    }
+
+    private func runProcess(_ process: Process) async -> CLIExecutionResult {
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        let stdout = BoundedProcessBuffer(limit: 32 * 1024)
+        let stderr = BoundedProcessBuffer(limit: 32 * 1024)
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            stdout.append(handle.availableData)
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            stderr.append(handle.availableData)
+        }
+        let completion = ProcessCompletion()
+        process.terminationHandler = { terminated in
+            completion.completeFromProcess(status: terminated.terminationStatus)
+        }
+        do {
+            try process.run()
+        } catch {
+            return CLIExecutionResult(
+                status: -1,
+                standardOutput: "",
+                standardError: "Unable to run elevated command: \(error.localizedDescription)",
+                timedOut: false)
+        }
+        let (status, timedOut) = await withCheckedContinuation {
+            completion.install($0)
+        }
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+        stdout.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
+        stderr.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
+        return CLIExecutionResult(
+            status: status,
+            standardOutput: stdout.string(),
+            standardError: redactDiagnosticText(stderr.string()),
+            timedOut: timedOut)
+    }
+}
+
 struct GlobalMutationReceipt: Equatable, Sendable {
     var ok: Bool
     var operationID: String
