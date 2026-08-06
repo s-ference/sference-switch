@@ -19,13 +19,17 @@ struct TrafficBrandMark: View {
                 .accessibilityHidden(true)
         case .sference:
             SferenceBrandShape()
-                .fill(Color.sferenceGreen)
+                .stroke(
+                    Color.sferenceGreen,
+                    style: SferenceBrandShape.strokeStyle(size: size))
                 .frame(width: size, height: size)
                 .accessibilityHidden(true)
         case .comparison:
             HStack(spacing: 3) {
                 SferenceBrandShape()
-                    .fill(Color.sferenceGreen)
+                    .stroke(
+                        Color.sferenceGreen,
+                        style: SferenceBrandShape.strokeStyle(size: size))
                     .frame(width: size, height: size)
                 ClaudeBrandShape()
                     .fill(Color.claudeTerracotta)
@@ -36,10 +40,17 @@ struct TrafficBrandMark: View {
     }
 }
 
-/// The Sference branch glyph, normalized from the bundled brand SVG.
-private struct SferenceBrandShape: Shape {
+/// The Sference "S" glyph, matching Assets/sference-logo-white.svg.
+///
+/// The mark is a stroked curve, not a filled outline, so this Shape returns
+/// the centreline and callers stroke it (see `sferenceStrokeStyle`). Filling
+/// it would render a thin sliver rather than the letterform.
+struct SferenceBrandShape: Shape {
+    /// Stroke width in source-viewBox units, scaled with the shape.
+    static let sourceStrokeWidth: CGFloat = 3
+
     func path(in rect: CGRect) -> Path {
-        let source = CGRect(x: 278.919, y: 213, width: 523.162, height: 654)
+        let source = CGRect(x: 0, y: 0, width: 22, height: 22)
         let scale = min(rect.width / source.width, rect.height / source.height)
         let xOffset = rect.midX - source.midX * scale
         let yOffset = rect.midY - source.midY * scale
@@ -48,65 +59,35 @@ private struct SferenceBrandShape: Shape {
         }
 
         var path = Path()
-        path.move(to: point(287.109, 343.786))
-        path.addLine(to: point(671.273, 343.786))
-        path.addLine(to: point(671.273, 474.572))
-        path.addLine(to: point(417.883, 474.572))
-        path.addQuadCurve(
-            to: point(409.692, 482.764),
-            control: point(409.692, 474.572))
-        path.addLine(to: point(409.692, 597.201))
-        path.addQuadCurve(
-            to: point(417.883, 605.393),
-            control: point(409.692, 605.393))
-        path.addLine(to: point(671.273, 605.393))
-        path.addLine(to: point(671.273, 736.179))
-        path.addLine(to: point(548.656, 736.179))
-        path.addQuadCurve(
-            to: point(540.465, 744.371),
-            control: point(540.465, 736.179))
-        path.addLine(to: point(540.465, 858.808))
-        path.addQuadCurve(
-            to: point(548.656, 867),
-            control: point(540.465, 867))
-        path.addLine(to: point(663.082, 867))
-        path.addQuadCurve(
-            to: point(671.273, 858.808),
-            control: point(671.273, 867))
-        path.addLine(to: point(671.273, 736.179))
-        path.addLine(to: point(793.89, 736.179))
-        path.addQuadCurve(
-            to: point(802.081, 727.987),
-            control: point(802.081, 736.179))
-        path.addLine(to: point(802.081, 613.55))
-        path.addQuadCurve(
-            to: point(793.89, 605.358),
-            control: point(802.081, 605.358))
-        path.addLine(to: point(671.273, 605.358))
-        path.addLine(to: point(671.273, 474.572))
-        path.addLine(to: point(793.89, 474.572))
-        path.addQuadCurve(
-            to: point(802.081, 466.38),
-            control: point(802.081, 474.572))
-        path.addLine(to: point(802.081, 351.943))
-        path.addQuadCurve(
-            to: point(793.89, 343.751),
-            control: point(802.081, 343.751))
-        path.addLine(to: point(671.273, 343.751))
-        path.addLine(to: point(671.273, 221.192))
-        path.addQuadCurve(
-            to: point(663.082, 213),
-            control: point(671.273, 213))
-        path.addLine(to: point(287.109, 213))
-        path.addQuadCurve(
-            to: point(278.919, 221.192),
-            control: point(278.919, 213))
-        path.addLine(to: point(278.919, 335.629))
-        path.addQuadCurve(
-            to: point(287.109, 343.821),
-            control: point(278.919, 343.821))
-        path.closeSubpath()
+        path.move(to: point(16.5, 6.5))
+        path.addCurve(
+            to: point(11, 3.5),
+            control1: point(15.5, 4.5),
+            control2: point(13.5, 3.5))
+        path.addCurve(
+            to: point(5.5, 8),
+            control1: point(8, 3.5),
+            control2: point(5.5, 5.5))
+        path.addCurve(
+            to: point(16.5, 14.5),
+            control1: point(5.5, 12),
+            control2: point(16.5, 10))
+        path.addCurve(
+            to: point(11, 18.5),
+            control1: point(16.5, 17),
+            control2: point(14, 18.5))
+        path.addCurve(
+            to: point(5.5, 15.5),
+            control1: point(8.5, 18.5),
+            control2: point(6.5, 17.5))
         return path
+    }
+
+    /// Stroke style for the mark at a given rendered size.
+    static func strokeStyle(size: CGFloat) -> StrokeStyle {
+        StrokeStyle(
+            lineWidth: sourceStrokeWidth * (size / 22),
+            lineCap: .round)
     }
 }
 

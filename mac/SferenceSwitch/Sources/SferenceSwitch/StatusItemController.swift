@@ -199,6 +199,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func addWarnings() {
         var added = false
 
+        if let message = state.proxyToggleMessage {
+            let item = disabledItem(message)
+            item.image = symbol("arrow.triangle.2.circlepath")
+            menu.addItem(item)
+            added = true
+        }
+
         if state.snapshotIsStale, state.routingSnapshot != nil {
             let item = disabledItem("Showing Last Confirmed Routing State")
             item.image = symbol("wifi.exclamationmark")

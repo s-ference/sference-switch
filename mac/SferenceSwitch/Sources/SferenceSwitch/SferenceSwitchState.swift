@@ -87,6 +87,10 @@ final class SferenceSwitchState: ObservableObject {
     @Published private(set) var proxyEnabled = false
     @Published private(set) var proxyChecking = false
     @Published private(set) var proxyPending = false
+    /// Transient message shown in the menubar after a proxy toggle. Cleared
+    /// after a few seconds by `clearProxyToggleMessage`.
+    @Published private(set) var proxyToggleMessage: String?
+    private var proxyMessageTask: Task<Void, Never>?
 
     private let reader: any AdminStatusReading
     private let modelCatalogReader: any ModelCatalogReading
@@ -476,36 +480,43 @@ final class SferenceSwitchState: ObservableObject {
             lastError = "sference-switch binary not found."
             return
         }
-        // The commands that flip the transparent proxy. Installing the
-        // LaunchDaemon and toggling /etc/hosts both need root.
-        let enableArgs: [[String]]
-        let disableArgs: [[String]]
+        // Chain both commands into a single osascript call so the user
+        // sees one admin password prompt, not two.
+        let commands: [[String]]
         if enabled {
-            enableArgs = [
+            commands = [
                 ["tls", "service", "install"],
                 ["intercept", "on"],
             ]
-            disableArgs = []
         } else {
-            enableArgs = []
-            disableArgs = [
+            commands = [
                 ["intercept", "off"],
                 ["tls", "service", "uninstall"],
             ]
         }
-        let steps = enabled ? enableArgs : disableArgs
-        for command in steps {
-            let result = await runElevated(
-                binary: binary,
-                arguments: command,
-                timeout: 60)
-            if !result.succeeded {
-                lastError = "Proxy change failed: \(result.standardError)"
-                await refreshProxyState()
-                return
-            }
+        let result = await runElevatedChained(
+            binary: binary,
+            commands: commands,
+            timeout: 120)
+        if !result.succeeded {
+            lastError = "Proxy change failed: \(result.standardError)"
+            await refreshProxyState()
+            return
         }
         await refreshProxyState()
+        setProxyToggleMessage(enabled
+            ? "Switch enabled — restart Claude Code to apply"
+            : "Switch disabled — restart Claude Code to apply")
+    }
+
+    private func setProxyToggleMessage(_ message: String) {
+        proxyToggleMessage = message
+        proxyMessageTask?.cancel()
+        proxyMessageTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.proxyToggleMessage = nil }
+        }
     }
 
     /// Refreshes the proxy-enabled flag in the background without needing
@@ -521,15 +532,23 @@ final class SferenceSwitchState: ObservableObject {
         proxyEnabled = result.standardOutput.contains("intercept: on")
     }
 
-    private func runElevated(
+    private func runElevatedChained(
         binary: URL,
-        arguments: [String],
+        commands: [[String]],
         timeout: TimeInterval
     ) async -> CLIExecutionResult {
+        // Chain all commands with && into a single shell string, then run
+        // that string via osascript. One admin prompt for all commands.
+        let binaryPath = binary.path
+        let shellParts = commands.map { args in
+            let all = [binaryPath] + args
+            return all.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
+        }
+        let shellCmd = shellParts.joined(separator: " && ")
         let runner = ElevatedCLIRunner()
         return await runner.run(CLIExecutionRequest(
-            binary: binary,
-            arguments: arguments,
+            binary: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", shellCmd],
             environment: [:],
             timeout: timeout))
     }
