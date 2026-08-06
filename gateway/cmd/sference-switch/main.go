@@ -76,6 +76,8 @@ func dispatch(args []string) int {
 		return cmdDown(args[1:])
 	case "uninstall":
 		return cmdUninstall(args[1:])
+	case "upgrade":
+		return cmdUpgrade(args[1:])
 	case "restart":
 		return cmdRestart(args[1:])
 	case "on":
@@ -169,6 +171,20 @@ removed.
 The macOS app owns its SMAppService login item. If the CLI cannot unregister
 that item safely, uninstall prints the required manual action and leaves the
 app bundle in place.
+`},
+	{"upgrade", "Update the CLI and menubar app from get.sference.com", `Usage: sference-switch upgrade [--check] [--force] [--cli-only] [--restart]
+
+Download the latest release manifest, verify the SHA-256 checksum, extract the
+ZIP, and swap the running binary in place. The menubar app bundle is replaced
+unless --cli-only is passed. No sudo is needed; the CLI installs to
+~/.local/bin and the app to ~/Applications.
+
+  --check     Report whether an update is available without installing
+  --force     Replace a development build
+  --cli-only  Skip the menubar app update
+  --restart   Restart the router and door after upgrading
+
+Refuses to upgrade a Homebrew or Nix install; use the package manager instead.
 `},
 	{"status", "Show aggregate component, auth, and client routing health", `Usage: sference-switch status [--verbose|-v]
 
