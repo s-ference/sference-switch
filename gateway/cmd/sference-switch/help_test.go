@@ -13,6 +13,7 @@ var expectedAdvertisedCommands = []string{
 	"up",
 	"down",
 	"uninstall",
+	"upgrade",
 	"status",
 	"restart",
 	"on",

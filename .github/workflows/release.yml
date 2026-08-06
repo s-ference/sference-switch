@@ -179,3 +179,84 @@ jobs:
           rm -f \
             "$RUNNER_TEMP/release-tag-signing-key.pub" \
             "$RUNNER_TEMP/release-tag-allowed-signers"
+
+      - name: Preserve release assets for the publish job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sference-switch-${{ inputs.release_tag }}-dist
+          path: |
+            dist/sference-switch_*_darwin_universal.zip
+            dist/checksums.txt
+            scripts/release/get.sh
+            scripts/release/publish-s3.sh
+          if-no-files-found: error
+
+  publish:
+    name: Publish to get.sference.com
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
+        with:
+          name: sference-switch-${{ inputs.release_tag }}-dist
+          path: dist
+
+      - name: Re-verify checksums after artifact round-trip
+        run: |
+          set -euo pipefail
+          cd dist
+          shasum -a 256 -c checksums.txt
+          cd ..
+
+      - name: Publish to S3 and flip stable manifest
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_AWS_ROLE_ARN: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+          RELEASE_S3_BUCKET: ${{ vars.RELEASE_S3_BUCKET }}
+          RELEASE_CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.RELEASE_CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+
+          # GitHub OIDC → AWS STS (no third-party action; the release contract
+          # test restricts uses: to actions/* only).
+          token="$(curl -fsSL \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p')"
+          creds="$(aws sts assume-role-with-web-identity \
+            --role-arn "$RELEASE_AWS_ROLE_ARN" \
+            --role-session-name "switch-release-$RELEASE_TAG" \
+            --web-identity-token "$token" \
+            --duration-seconds 900 \
+            --query Credentials --output json)"
+          export AWS_ACCESS_KEY_ID="$(printf '%s' "$creds" | python3 -c 'import json,sys; print(json.load(sys.stdin)["AccessKeyId"])')"
+          export AWS_SECRET_ACCESS_KEY="$(printf '%s' "$creds" | python3 -c 'import json,sys; print(json.load(sys.stdin)["SecretAccessKey"])')"
+          export AWS_SESSION_TOKEN="$(printf '%s' "$creds" | python3 -c 'import json,sys; print(json.load(sys.stdin)["SessionToken"])')"
+          export AWS_DEFAULT_REGION="eu-central-1"
+
+          # Install the release scripts from the artifact (they were included
+          # in the upload for reproducibility).
+          chmod +x dist/publish-s3.sh
+          dist/publish-s3.sh \
+            --tag "$RELEASE_TAG" \
+            --dist-dir dist \
+            --bucket "$RELEASE_S3_BUCKET" \
+            --distribution-id "$RELEASE_CLOUDFRONT_DISTRIBUTION_ID" \
+            --channel stable
+
+      - name: Smoke-test the CDN
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          manifest="$(curl -fsSL --proto '=https' --retry 3 "https://get.sference.com/sference-switch/stable/latest.json")"
+          actual="$(printf '%s' "$manifest" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+          [[ "$actual" == "$version" ]] \
+            || { printf 'CDN manifest version %s != expected %s\n' "$actual" "$version" >&2; exit 1; }
+          printf 'CDN manifest confirms %s\n' "$actual"
