@@ -15,9 +15,9 @@ func TestNewIncludesBundledSferenceFallback(t *testing.T) {
 	if !quote.Priced {
 		t.Fatal("bundled GLM-5.2 fallback is unpriced")
 	}
-	if !approx(quote.Price.Prompt, 1.4) ||
-		!approx(quote.Price.Completion, 4.4) ||
-		!approx(quote.Price.CacheRead, 0.14) ||
+	if !approx(quote.Price.Prompt, 1.2) ||
+		!approx(quote.Price.Completion, 4.2) ||
+		!approx(quote.Price.CacheRead, 0.26) ||
 		!approx(quote.Price.CacheWrite5m, 0) {
 		t.Fatalf("fallback price = %+v", quote.Price)
 	}
@@ -25,18 +25,18 @@ func TestNewIncludesBundledSferenceFallback(t *testing.T) {
 	if metadata.Source != sferenceFallbackSource {
 		t.Fatalf("source = %q, want %q", metadata.Source, sferenceFallbackSource)
 	}
-	if metadata.ModelCount != 3 || metadata.PricedModelCount != 3 {
+	if metadata.ModelCount != 6 || metadata.PricedModelCount != 6 {
 		t.Fatalf("fallback metadata = %+v", metadata)
 	}
 	for model, want := range map[string]Price{
+		"moonshotai/Kimi-K3": {
+			Prompt: 2.25, Completion: 11.25, CacheRead: 0.225,
+		},
 		"zai-org/GLM-5.2": {
-			Prompt: 1.4, Completion: 4.4, CacheRead: 0.14,
+			Prompt: 1.2, Completion: 4.2, CacheRead: 0.26,
 		},
-		"moonshotai/Kimi-K2.7-Code": {
-			Prompt: 0.95, Completion: 4, CacheRead: 0.16,
-		},
-		"nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": {
-			Prompt: 0.6, Completion: 2.4, CacheRead: 0.12,
+		"deepseek-ai/DeepSeek-V4-Flash": {
+			Prompt: 0.14, Completion: 0.28, CacheRead: 0.07,
 		},
 	} {
 		got := p.SferencePrice(model)
@@ -50,7 +50,7 @@ func TestNewIncludesBundledSferenceFallback(t *testing.T) {
 	if metadata.Revision == "" {
 		t.Fatal("fallback revision is empty")
 	}
-	if want := time.Date(2026, time.July, 25, 20, 46, 58, 0, time.UTC); !metadata.FetchedAt.Equal(want) {
+	if want := time.Date(2026, time.July, 30, 0, 0, 0, 0, time.UTC); !metadata.FetchedAt.Equal(want) {
 		t.Fatalf("fallback fetched at = %s, want %s", metadata.FetchedAt, want)
 	}
 }
@@ -65,8 +65,8 @@ func TestEmbeddedFallbackProvenanceMatchesCompiledMetadata(t *testing.T) {
 	if err := json.Unmarshal(sferenceFallbackJSON, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.SchemaVersion != 1 {
-		t.Fatalf("schema_version = %d, want 1", envelope.SchemaVersion)
+	if envelope.SchemaVersion != 2 {
+		t.Fatalf("schema_version = %d, want 2", envelope.SchemaVersion)
 	}
 	fetchedAt, err := time.Parse(time.RFC3339, envelope.FetchedAt)
 	if err != nil {
@@ -98,8 +98,8 @@ func TestEmbeddedFallbackProvenanceMatchesCompiledMetadata(t *testing.T) {
 func TestReplaceSferenceCatalogReplacesAndRemoves(t *testing.T) {
 	p := New()
 	first := catalogJSON(
-		catalogModel{id: "model-a", prompt: 0.000001},
-		catalogModel{id: "model-b", prompt: 0.000002},
+		catalogModel{id: "model-a", prompt: 1.0},
+		catalogModel{id: "model-b", prompt: 2.0},
 	)
 	if err := p.ReplaceSferenceCatalog(first, "live", time.Unix(10, 0), ""); err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestReplaceSferenceCatalogReplacesAndRemoves(t *testing.T) {
 		t.Fatalf("first model count = %d, want 2", p.SferenceModelCount())
 	}
 
-	second := catalogJSON(catalogModel{id: "model-b", prompt: 0.000003})
+	second := catalogJSON(catalogModel{id: "model-b", prompt: 3.0})
 	if err := p.ReplaceSferenceCatalog(second, "live", time.Unix(20, 0), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestSferenceCatalogTracksMissingCacheRates(t *testing.T) {
 	body := []byte(`{
 		"data": [{
 			"id": "model-a",
-			"pricing": {"prompt": 0.000001, "completion": 0.000002}
+			"pricing": {"input_per_million_usd": 1.0, "output_per_million_usd": 2.0}
 		}]
 	}`)
 	if err := p.ReplaceSferenceCatalog(
@@ -157,7 +157,7 @@ func TestSferenceCatalogTracksMissingCacheRates(t *testing.T) {
 
 func TestInvalidSferenceRefreshRetainsLastKnownGood(t *testing.T) {
 	p := New()
-	good := catalogJSON(catalogModel{id: "model-a", prompt: 0.000002})
+	good := catalogJSON(catalogModel{id: "model-a", prompt: 2.0})
 	fetchedAt := time.Unix(100, 0).UTC()
 	if err := p.ReplaceSferenceCatalog(good, "live", fetchedAt, ""); err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestInvalidSferenceRefreshRetainsLastKnownGood(t *testing.T) {
 	before := p.Capture()
 	beforeMetadata := before.SferenceMetadata()
 
-	bad := []byte(`{"data":[{"id":"model-a","pricing":{"prompt":-1}}]}`)
+	bad := []byte(`{"data":[{"id":"model-a","pricing":{"input_per_million_usd":-1}}]}`)
 	if err := p.ReplaceSferenceCatalog(bad, "broken", time.Unix(200, 0), ""); err == nil {
 		t.Fatal("negative pricing refresh succeeded")
 	}
@@ -183,8 +183,8 @@ func TestInvalidSferenceRefreshRetainsLastKnownGood(t *testing.T) {
 }
 
 func TestSferenceRevisionIndependentOfResponseOrder(t *testing.T) {
-	modelA := catalogModel{id: "model-a", prompt: 0.000001, completion: 0.000002}
-	modelB := catalogModel{id: "model-b", prompt: 0.000003, completion: 0.000004}
+	modelA := catalogModel{id: "model-a", prompt: 1.0, completion: 2.0}
+	modelB := catalogModel{id: "model-b", prompt: 3.0, completion: 0.000004}
 	p1 := New()
 	p2 := New()
 	if err := p1.ReplaceSferenceCatalog(
@@ -216,7 +216,7 @@ func TestSferenceRevisionDistinguishesUnpricedFromPricedZero(t *testing.T) {
 	}
 	pricedZero := New()
 	if err := pricedZero.ReplaceSferenceCatalog(
-		[]byte(`{"data":[{"id":"model-a","pricing":{"prompt":0,"completion":0}}]}`),
+		[]byte(`{"data":[{"id":"model-a","pricing":{"input_per_million_usd":0,"output_per_million_usd":0}}]}`),
 		"live",
 		time.Unix(10, 0),
 		"",
@@ -232,7 +232,7 @@ func TestSferenceRevisionDistinguishesUnpricedFromPricedZero(t *testing.T) {
 func TestCapturedSnapshotStableAcrossRefresh(t *testing.T) {
 	p := New()
 	if err := p.ReplaceSferenceCatalog(
-		catalogJSON(catalogModel{id: "model-a", prompt: 0.000001}),
+		catalogJSON(catalogModel{id: "model-a", prompt: 1.0}),
 		"revision-a",
 		time.Unix(10, 0),
 		"",
@@ -243,7 +243,7 @@ func TestCapturedSnapshotStableAcrossRefresh(t *testing.T) {
 	oldQuote := captured.Quote("sference", "model-a")
 
 	if err := p.ReplaceSferenceCatalog(
-		catalogJSON(catalogModel{id: "model-a", prompt: 0.000009}),
+		catalogJSON(catalogModel{id: "model-a", prompt: 9.0}),
 		"revision-b",
 		time.Unix(20, 0),
 		"",
@@ -254,7 +254,7 @@ func TestCapturedSnapshotStableAcrossRefresh(t *testing.T) {
 		t.Fatalf("captured quote changed: before=%+v after=%+v", oldQuote, got)
 	}
 	if got := p.Quote("sference", "model-a").Price.Prompt; got != 9 {
-		t.Fatalf("current prompt = %v, want 9", got)
+		t.Fatalf("current prompt = %v, want 9.0", got)
 	}
 	if oldQuote.CostUSD(1_000_000, 0, 0, 0, 0) != 1 {
 		t.Fatalf("captured cost = %v, want 1", oldQuote.CostUSD(1_000_000, 0, 0, 0, 0))
@@ -269,9 +269,9 @@ func TestQuoteNanoUSDRatesAndCheckedCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rates != (NanoUSDRates{
-		Prompt:       1400,
-		Completion:   4400,
-		CacheRead:    140,
+		Prompt:       1200,
+		Completion:   4200,
+		CacheRead:    260,
 		CacheWrite5m: 0,
 	}) {
 		t.Fatalf("nano-USD rates = %+v", rates)
@@ -280,8 +280,8 @@ func TestQuoteNanoUSDRatesAndCheckedCost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cost != 186_800 {
-		t.Fatalf("cost = %d nano-USD, want 186800", cost)
+	if cost != 167_200 {
+		t.Fatalf("cost = %d nano-USD, want 167200", cost)
 	}
 	if _, err := rates.CostNanoUSD(math.MaxInt64, 1, 0, 0, 0); err == nil {
 		t.Fatal("overflowing cost succeeded")
@@ -310,7 +310,7 @@ func TestExplicitZeroSferenceRatesRemainPriced(t *testing.T) {
 	  "data": [
 	    {
 	      "id": "free/model",
-	      "pricing": {"prompt": 0, "completion": 0}
+	      "pricing": {"input_per_million_usd": 0, "output_per_million_usd": 0}
 	    }
 	  ]
 	}`)
@@ -347,7 +347,7 @@ func catalogJSON(models ...catalogModel) []byte {
 			out += ","
 		}
 		out += fmt.Sprintf(
-			`{"id":%q,"pricing":{"prompt":%g,"completion":%g}}`,
+			`{"id":%q,"pricing":{"input_per_million_usd":%g,"output_per_million_usd":%g}}`,
 			model.id,
 			model.prompt,
 			model.completion,

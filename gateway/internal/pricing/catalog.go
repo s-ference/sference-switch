@@ -1251,7 +1251,6 @@ func (s *Snapshot) ModelsDevRootETag() string {
 	for _, provider := range []string{
 		ProviderAnthropic,
 		ProviderOpenAI,
-		ProviderSference,
 	} {
 		etag := s.ModelsDevETag(provider)
 		if etag == "" {

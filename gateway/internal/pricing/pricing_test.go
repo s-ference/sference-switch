@@ -32,10 +32,9 @@ func TestHydrateFromSferenceMock(t *testing.T) {
 			{
 				"id": "zai-org/GLM-5.2",
 				"pricing": map[string]interface{}{
-					"prompt":            0.0000014,
-					"completion":        0.0000014,
-					"input_cache_read":  0.0000001,
-					"input_cache_write": 0.0000014,
+					"input_per_million_usd":  1.2,
+					"output_per_million_usd": 4.2,
+					"cached_input_per_million_usd": 0.26,
 				},
 			},
 		},
@@ -56,17 +55,17 @@ func TestHydrateFromSferenceMock(t *testing.T) {
 		t.Fatalf("hydrate: %v", err)
 	}
 	got := p.SferencePrice("zai-org/GLM-5.2")
-	if !approx(got.Prompt, 1.4) {
-		t.Fatalf("prompt = %v want 1.4", got.Prompt)
+	if !approx(got.Prompt, 1.2) {
+		t.Fatalf("prompt = %v want 1.2", got.Prompt)
 	}
-	if !approx(got.Completion, 1.4) {
-		t.Fatalf("completion = %v want 1.4", got.Completion)
+	if !approx(got.Completion, 4.2) {
+		t.Fatalf("completion = %v want 4.2", got.Completion)
 	}
-	if !approx(got.CacheRead, 0.1) {
-		t.Fatalf("cache_read = %v want 0.1", got.CacheRead)
+	if !approx(got.CacheRead, 0.26) {
+		t.Fatalf("cache_read = %v want 0.26", got.CacheRead)
 	}
-	if !approx(got.CacheWrite5m, 1.4) {
-		t.Fatalf("cache_write = %v want 1.4", got.CacheWrite5m)
+	if !approx(got.CacheWrite5m, 0) {
+		t.Fatalf("cache_write = %v want 0", got.CacheWrite5m)
 	}
 }
 
@@ -96,10 +95,10 @@ func TestHydrateExpectedModelMissingErrors(t *testing.T) {
 }
 
 func TestCostUSDKnownTuple(t *testing.T) {
-	tbl := Price{Prompt: 1.4, Completion: 1.4, CacheRead: 0.1, CacheWrite5m: 1.4}
+	tbl := Price{Prompt: 1.2, Completion: 4.2, CacheRead: 0.26, CacheWrite5m: 0}
 	p := NewWithPrices(map[string]Price{"zai-org/GLM-5.2": tbl})
 	in, out, cr, cw := int64(1000), int64(500), int64(200), int64(100)
-	want := (1000*1.4 + 500*1.4 + 200*0.1 + 100*1.4) / 1e6
+	want := (1000*1.2 + 500*4.2 + 200*0.26 + 100*0) / 1e6
 	got := p.Quote("sference", "zai-org/GLM-5.2").CostUSD(in, out, cr, cw, 0)
 	if got != want {
 		t.Fatalf("got %v want %v", got, want)

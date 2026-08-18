@@ -48,6 +48,52 @@ const modelsDevFixture = `{
         "family": "gpt",
         "limit": {"context": 400000, "output": 100000},
         "cost": {"input": 1.25, "output": 10}
+      },
+      "reasoning-toggle-test": {
+        "id": "reasoning-toggle-test",
+        "name": "Reasoning Toggle Test",
+        "family": "gpt",
+        "reasoning": true,
+        "reasoning_options": [{"type": "toggle"}],
+        "limit": {"context": 200000, "output": 100000},
+        "cost": {"input": 0.3, "output": 0.75, "cache_read": 0.06}
+      },
+      "reasoning-effort-test": {
+        "id": "reasoning-effort-test",
+        "name": "Reasoning Effort Test",
+        "reasoning": true,
+        "reasoning_options": [
+          {"type": "effort", "values": ["low", null, "high", "turbo-next"]},
+          {"type": "budget_tokens", "min": -1, "max": 32000}
+        ]
+      },
+      "reasoning-empty-options-test": {
+        "id": "reasoning-empty-options-test",
+        "name": "Reasoning Empty Options Test",
+        "reasoning": true,
+        "reasoning_options": []
+      },
+      "future/Reasoning-Test": {
+        "id": "future/Reasoning-Test",
+        "name": "Future Reasoning Test",
+        "reasoning": true,
+        "reasoning_options": [
+          {"type": "future_control", "value": "ignored"},
+          {"type": "toggle"}
+        ]
+      },
+      "future/Only-Unknown-Test": {
+        "id": "future/Only-Unknown-Test",
+        "name": "Only Unknown Reasoning Test",
+        "reasoning": true,
+        "reasoning_options": [
+          {"type": "future_control", "value": "ignored"}
+        ]
+      },
+      "plain/Model-Test": {
+        "id": "plain/Model-Test",
+        "name": "Plain Model Test",
+        "reasoning": false
       }
     }
   },
@@ -147,13 +193,6 @@ func TestReplaceModelsDevPublishesProviderScopedProfiles(t *testing.T) {
 	if !openAI.Priced || openAI.Price.Prompt != 1.25 {
 		t.Fatalf("OpenAI quote = %+v", openAI)
 	}
-	sference := p.QuoteProfile(
-		ProviderSference, "zai-org/GLM-Test", ProfileStandard,
-	)
-	if sference.Priced {
-		t.Fatalf("models.dev supplied a Sference price: %+v", sference)
-	}
-
 	record, ok := p.Capture().Model(ProviderAnthropic, "claude-opus-5")
 	if !ok {
 		t.Fatal("Opus record missing")
@@ -208,7 +247,7 @@ func TestModelsDevTieredPricingRemainsUnpriced(t *testing.T) {
 		t.Fatalf("tiered model received incomplete base price: %+v", quote)
 	}
 	metadata := p.Capture().ProviderMetadata(ProviderOpenAI)
-	if metadata.ModelCount != 1 || metadata.PricedModelCount != 0 {
+	if metadata.ModelCount != 7 || metadata.PricedModelCount != 1 {
 		t.Fatalf("tiered OpenAI metadata = %+v", metadata)
 	}
 }
@@ -246,7 +285,7 @@ func TestAuthenticatedSferenceOmissionSuppressesFallbackAcrossCache(t *testing.T
 	body := []byte(`{
 		"data": [{
 			"id": "only/authenticated-model",
-			"pricing": {"prompt": 0.000002, "completion": 0.000003}
+			"pricing": {"input_per_million_usd": 2.0, "output_per_million_usd": 3.0}
 		}]
 	}`)
 	if err := p.ReplaceSferenceCatalog(
@@ -338,8 +377,8 @@ func TestModelsDevReasoningPreservesProviderScopedOptions(t *testing.T) {
 	}
 
 	glm, ok := p.Capture().ModelReasoning(
-		ProviderSference,
-		"zai-org/GLM-Test",
+		ProviderOpenAI,
+		"reasoning-toggle-test",
 	)
 	if !ok || !glm.Supported || len(glm.Options) != 1 ||
 		glm.Options[0].Type != ReasoningToggle ||
@@ -349,8 +388,8 @@ func TestModelsDevReasoningPreservesProviderScopedOptions(t *testing.T) {
 	}
 
 	deepseek, ok := p.Capture().ModelReasoning(
-		ProviderSference,
-		"deepseek-ai/DeepSeek-Test",
+		ProviderOpenAI,
+		"reasoning-effort-test",
 	)
 	if !ok || len(deepseek.Options) != 2 ||
 		deepseek.Options[0].Type != ReasoningEffort ||
@@ -371,15 +410,15 @@ func TestModelsDevReasoningPreservesProviderScopedOptions(t *testing.T) {
 	}
 
 	emptyOptions, ok := p.Capture().ModelReasoning(
-		ProviderSference,
-		"empty-options/Reasoning-Test",
+		ProviderOpenAI,
+		"reasoning-empty-options-test",
 	)
 	if !ok || !emptyOptions.Supported || emptyOptions.Options == nil ||
 		len(emptyOptions.Options) != 0 {
 		t.Fatalf("empty verified controls = %+v, found=%t", emptyOptions, ok)
 	}
 	future, ok := p.Capture().ModelReasoning(
-		ProviderSference,
+		ProviderOpenAI,
 		"future/Reasoning-Test",
 	)
 	if !ok || len(future.Options) != 1 ||
@@ -388,7 +427,7 @@ func TestModelsDevReasoningPreservesProviderScopedOptions(t *testing.T) {
 			future, ok)
 	}
 	onlyUnknown, ok := p.Capture().ModelReasoning(
-		ProviderSference,
+		ProviderOpenAI,
 		"future/Only-Unknown-Test",
 	)
 	if !ok || !onlyUnknown.Supported || onlyUnknown.Options == nil ||
@@ -396,14 +435,14 @@ func TestModelsDevReasoningPreservesProviderScopedOptions(t *testing.T) {
 		t.Fatalf("all-unknown controls = %+v, found=%t",
 			onlyUnknown, ok)
 	}
-	metadata := p.Capture().ProviderMetadata(ProviderSference)
+	metadata := p.Capture().ProviderMetadata(ProviderOpenAI)
 	if len(metadata.Diagnostics) != 1 ||
 		metadata.Diagnostics[0] !=
 			"ignored 2 unknown reasoning option type(s)" {
 		t.Fatalf("reasoning diagnostics = %#v", metadata.Diagnostics)
 	}
 	plain, ok := p.Capture().ModelReasoning(
-		ProviderSference,
+		ProviderOpenAI,
 		"plain/Model-Test",
 	)
 	if !ok || plain.Supported || plain.Options == nil {
@@ -448,11 +487,10 @@ func TestModelsDevMalformedReasoningRetainsLastKnownGood(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := p.Capture()
-	malformed := strings.Replace(
+	malformed := strings.ReplaceAll(
 		modelsDevFixture,
 		`"values": ["low", null, "high", "turbo-next"]`,
 		`"values": ["low", 1, "high", "turbo-next"]`,
-		1,
 	)
 	if err := p.ReplaceModelsDev(
 		[]byte(malformed),
@@ -486,7 +524,7 @@ func TestVendoredSferenceFallbackIsProjectedWithoutNativePrices(t *testing.T) {
 	p := New()
 	sference, ok := p.Capture().Model(ProviderSference, "zai-org/GLM-5.2")
 	if !ok || sference.Provenance.LoadedFrom != LoadedFromVendoredFallback ||
-		sference.Prices[ProfileStandard].Price.Prompt != 1.4 {
+		sference.Prices[ProfileStandard].Price.Prompt != 1.2 {
 		t.Fatalf("embedded Sference record = %+v, found=%t", sference, ok)
 	}
 	if sference.Availability.Account != nil {
@@ -604,20 +642,20 @@ func TestDisplayNameAndPresentationRevisionUseHighestPresentationAuthority(t *te
 		t.Fatal(err)
 	}
 	before := p.Capture()
-	initialRevision := before.PresentationRevision(ProviderSference)
+	initialRevision := before.PresentationRevision(ProviderOpenAI)
 	if name, ok := before.DisplayName(
-		ProviderSference,
-		"zai-org/GLM-Test",
-	); !ok || name != "GLM Test" {
+		ProviderOpenAI,
+		"reasoning-toggle-test",
+	); !ok || name != "Reasoning Toggle Test" {
 		t.Fatalf("models.dev display name = %q, found=%t", name, ok)
 	}
-	initialQuote := before.Quote(ProviderSference, "zai-org/GLM-Test")
+	initialQuote := before.Quote(ProviderOpenAI, "reasoning-toggle-test")
 
 	if err := p.ReplaceProviderAvailability(
-		ProviderSference,
+		ProviderOpenAI,
 		[]AvailabilityModel{{
-			CanonicalModelID: "zai-org/GLM-Test",
-			DisplayName:      "Account GLM",
+			CanonicalModelID: "reasoning-toggle-test",
+			DisplayName:      "Account Reasoning Toggle",
 		}},
 		"sference_model_apis",
 		now.Add(time.Minute),
@@ -627,9 +665,9 @@ func TestDisplayNameAndPresentationRevisionUseHighestPresentationAuthority(t *te
 	}
 	after := p.Capture()
 	if name, ok := after.DisplayName(
-		ProviderSference,
-		"zai-org/GLM-Test",
-	); !ok || name != "Account GLM" {
+		ProviderOpenAI,
+		"reasoning-toggle-test",
+	); !ok || name != "Account Reasoning Toggle" {
 		t.Fatalf("Model APIs display name = %q, found=%t", name, ok)
 	}
 	if name, ok := after.DisplayName(
@@ -638,18 +676,18 @@ func TestDisplayNameAndPresentationRevisionUseHighestPresentationAuthority(t *te
 	); ok || name != "" {
 		t.Fatalf("provider-prefixed alias resolved to %q, found=%t", name, ok)
 	}
-	if after.PresentationRevision(ProviderSference) == initialRevision {
+	if after.PresentationRevision(ProviderOpenAI) == initialRevision {
 		t.Fatal("display-name change did not change presentation revision")
 	}
 	if quote := after.Quote(
-		ProviderSference,
-		"zai-org/GLM-Test",
+		ProviderOpenAI,
+		"reasoning-toggle-test",
 	); quote != initialQuote {
 		t.Fatalf("presentation availability changed quote: before=%+v after=%+v", initialQuote, quote)
 	}
 	reasoning, ok := after.ModelReasoning(
-		ProviderSference,
-		"zai-org/GLM-Test",
+		ProviderOpenAI,
+		"reasoning-toggle-test",
 	)
 	if !ok || len(reasoning.Options) != 1 ||
 		reasoning.Options[0].Type != ReasoningToggle ||
@@ -667,7 +705,7 @@ func TestDisplayNameAndPresentationRevisionUseHighestPresentationAuthority(t *te
 		t.Fatalf("nil snapshot presentation revision = %q", revision)
 	}
 
-	body, err := after.ExportProviderCache(ProviderSference)
+	body, err := after.ExportProviderCache(ProviderOpenAI)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,13 +727,13 @@ func TestDisplayNameAndPresentationRevisionUseHighestPresentationAuthority(t *te
 		t.Fatal(err)
 	}
 	if name, ok := restored.Capture().DisplayName(
-		ProviderSference,
-		"zai-org/GLM-Test",
-	); !ok || name != "Account GLM" {
+		ProviderOpenAI,
+		"reasoning-toggle-test",
+	); !ok || name != "Account Reasoning Toggle" {
 		t.Fatalf("restored display name = %q, found=%t", name, ok)
 	}
 	restoredMetadata := restored.Capture().ProviderMetadata(
-		ProviderSference,
+		ProviderOpenAI,
 	)
 	if restoredMetadata.Provenance.Source != "sference_model_apis" ||
 		restoredMetadata.Provenance.Revision != "sha256:model-apis" ||
@@ -703,9 +741,9 @@ func TestDisplayNameAndPresentationRevisionUseHighestPresentationAuthority(t *te
 		restoredMetadata.Provenance.ETag != "" {
 		t.Fatalf("restored mixed provenance = %+v", restoredMetadata)
 	}
-	if restored.Capture().ModelsDevETag(ProviderSference) !=
+	if restored.Capture().ModelsDevETag(ProviderOpenAI) !=
 		`"models-dev-root"` ||
-		restored.Capture().ModelsDevValidatedAt(ProviderSference) != now {
+		restored.Capture().ModelsDevValidatedAt(ProviderOpenAI) != now {
 		t.Fatalf("restored mixed models.dev metadata = %+v",
 			restoredMetadata)
 	}
@@ -724,8 +762,8 @@ func TestNormalizedCatalogReadResultsAreOwnedCopies(t *testing.T) {
 	record.Profiles[ProfileFast] = definition
 	record.Prices[ProfileFast] = PriceProfile{}
 	deepseek, _ := p.Capture().Model(
-		ProviderSference,
-		"deepseek-ai/DeepSeek-Test",
+		ProviderOpenAI,
+		"reasoning-effort-test",
 	)
 	*deepseek.Reasoning.Options[0].Values[0] = "changed"
 	*deepseek.Reasoning.Options[1].Max = 1
@@ -742,8 +780,8 @@ func TestNormalizedCatalogReadResultsAreOwnedCopies(t *testing.T) {
 		t.Fatal("Models result retained snapshot memory")
 	}
 	deepseekAgain, _ := p.Capture().Model(
-		ProviderSference,
-		"deepseek-ai/DeepSeek-Test",
+		ProviderOpenAI,
+		"reasoning-effort-test",
 	)
 	if *deepseekAgain.Reasoning.Options[0].Values[0] != "low" ||
 		*deepseekAgain.Reasoning.Options[1].Max != 32_000 {
@@ -826,7 +864,7 @@ func TestProviderCacheSchema1RoundTripsReasoningAndRejectsOtherSchemas(
 	); err != nil {
 		t.Fatal(err)
 	}
-	body, err := live.ExportProviderCache(ProviderSference)
+	body, err := live.ExportProviderCache(ProviderOpenAI)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -835,15 +873,15 @@ func TestProviderCacheSchema1RoundTripsReasoningAndRejectsOtherSchemas(
 		t.Fatal(err)
 	}
 	deepseek, ok := restored.Capture().ModelReasoning(
-		ProviderSference,
-		"deepseek-ai/DeepSeek-Test",
+		ProviderOpenAI,
+		"reasoning-effort-test",
 	)
 	if !ok || deepseek.Provenance.LoadedFrom != LoadedFromRuntimeCache ||
 		len(deepseek.Options) != 2 ||
 		deepseek.Options[0].Values[1] != nil {
 		t.Fatalf("restored reasoning = %+v, found=%t", deepseek, ok)
 	}
-	metadata := restored.Capture().ProviderMetadata(ProviderSference)
+	metadata := restored.Capture().ProviderMetadata(ProviderOpenAI)
 	if metadata.ModelsDevValidatedAt != capturedAt {
 		t.Fatalf("restored validated_at = %s, want %s",
 			metadata.ModelsDevValidatedAt, capturedAt)
@@ -866,10 +904,10 @@ func TestProviderCacheSchema1RoundTripsReasoningAndRejectsOtherSchemas(
 	if err := json.Unmarshal(body, &invalid); err != nil {
 		t.Fatal(err)
 	}
-	record := invalid.Models["deepseek-ai/DeepSeek-Test"]
+	record := invalid.Models["reasoning-effort-test"]
 	invalidMinimum := int64(-2)
 	record.Reasoning.Options[1].Min = &invalidMinimum
-	invalid.Models["deepseek-ai/DeepSeek-Test"] = record
+	invalid.Models["reasoning-effort-test"] = record
 	invalid.ContentSHA256, err = cachedModelsSHA256(invalid.Models)
 	if err != nil {
 		t.Fatal(err)
@@ -901,7 +939,7 @@ func TestModelsDevRootETagRequiresConsistentCompleteSlices(t *testing.T) {
 	current := p.current.Load()
 	layers := cloneProviderLayers(current.providerLayers)
 	key := providerLayerKey{
-		provider:   ProviderSference,
+		provider:   ProviderOpenAI,
 		loadedFrom: LoadedFromLive,
 		source:     modelsDevSource,
 	}
@@ -918,7 +956,7 @@ func TestModelsDevRootETagRequiresConsistentCompleteSlices(t *testing.T) {
 	p.publishLocked(cloneSnapshotWithLayers(current, layers))
 	p.publishMu.Unlock()
 	if !changed {
-		t.Fatal("test fixture had no Sference public evidence")
+		t.Fatal("test fixture had no OpenAI public evidence")
 	}
 	if got := p.Capture().ModelsDevRootETag(); got != "" {
 		t.Fatalf("inconsistent provider root ETag = %q, want empty", got)
@@ -1156,8 +1194,8 @@ func TestReplaceModelsDevRetiresRemovedRuntimeCacheRecords(t *testing.T) {
 	if err := seed.ReplaceProviderAvailability(
 		ProviderSference,
 		[]AvailabilityModel{{
-			CanonicalModelID: "deepseek-ai/DeepSeek-Test",
-			DisplayName:      "Account DeepSeek",
+			CanonicalModelID: "reasoning-effort-test",
+			DisplayName:      "Account Effort",
 			ContextTokens:    900_000,
 		}},
 		"sference_model_apis",
@@ -1171,7 +1209,6 @@ func TestReplaceModelsDevRetiresRemovedRuntimeCacheRecords(t *testing.T) {
 	for _, provider := range []string{
 		ProviderAnthropic,
 		ProviderOpenAI,
-		ProviderSference,
 	} {
 		cache, err := seed.ExportProviderCache(provider)
 		if err != nil {
@@ -1186,10 +1223,9 @@ func TestReplaceModelsDevRetiresRemovedRuntimeCacheRecords(t *testing.T) {
 	if err := json.Unmarshal([]byte(modelsDevFixture), &updated); err != nil {
 		t.Fatal(err)
 	}
-	sference := updated[ProviderSference].(map[string]any)
-	models := sference["models"].(map[string]any)
-	delete(models, "deepseek-ai/DeepSeek-Test")
-	delete(models, "empty-options/Reasoning-Test")
+	openai := updated[ProviderOpenAI].(map[string]any)
+	models := openai["models"].(map[string]any)
+	delete(models, "reasoning-effort-test")
 	updatedBody, err := json.Marshal(updated)
 	if err != nil {
 		t.Fatal(err)
@@ -1204,38 +1240,35 @@ func TestReplaceModelsDevRetiresRemovedRuntimeCacheRecords(t *testing.T) {
 	}
 
 	if _, ok := restored.Capture().Model(
-		ProviderSference,
-		"empty-options/Reasoning-Test",
+		ProviderOpenAI,
+		"reasoning-effort-test",
 	); ok {
-		t.Fatal("removed pure models.dev cache record remained active")
+		t.Fatal("removed models.dev record survived replacement")
 	}
-	deepseek, ok := restored.Capture().Model(
-		ProviderSference,
-		"deepseek-ai/DeepSeek-Test",
+	effort, ok := restored.Capture().Model(
+		ProviderOpenAI,
+		"reasoning-effort-test",
 	)
 	if !ok {
 		t.Fatal("independent account availability was removed")
 	}
-	if deepseek.DisplayName != "Account DeepSeek" ||
-		deepseek.ContextTokens != 900_000 ||
-		deepseek.Availability.Account == nil {
-		t.Fatalf("preserved account metadata = %+v", deepseek)
+	if effort.DisplayName != "Account Effort" ||
+		effort.ContextTokens != 900_000 ||
+		effort.Availability.Account == nil {
+		t.Fatalf("preserved account metadata = %+v", effort)
 	}
-	if deepseek.Availability.Public != nil ||
-		deepseek.Reasoning != nil ||
-		deepseek.Family != "" ||
-		len(deepseek.Profiles) != 0 ||
-		len(deepseek.Prices) != 0 {
+	if effort.Availability.Public != nil ||
+		len(effort.Prices) != 0 {
 		t.Fatalf("superseded models.dev fields remained active: %+v",
-			deepseek)
+			effort)
 	}
 	if got := restored.Capture().ModelsDevRootETag(); got != `"new-root"` {
 		t.Fatalf("root ETag after complete replacement = %q", got)
 	}
 	if got := restored.Capture().ModelsDevValidatedAt(
-		ProviderSference,
+		ProviderOpenAI,
 	); got != newCapturedAt {
-		t.Fatalf("Sference validated_at = %s, want %s",
+		t.Fatalf("OpenAI validated_at = %s, want %s",
 			got, newCapturedAt)
 	}
 
@@ -1243,7 +1276,6 @@ func TestReplaceModelsDevRetiresRemovedRuntimeCacheRecords(t *testing.T) {
 	for _, provider := range []string{
 		ProviderAnthropic,
 		ProviderOpenAI,
-		ProviderSference,
 	} {
 		cache, err := restored.ExportProviderCache(provider)
 		if err != nil {
@@ -1254,14 +1286,14 @@ func TestReplaceModelsDevRetiresRemovedRuntimeCacheRecords(t *testing.T) {
 		}
 	}
 	if _, ok := afterRestart.Capture().ModelReasoning(
-		ProviderSference,
-		"deepseek-ai/DeepSeek-Test",
+		ProviderOpenAI,
+		"reasoning-effort-test",
 	); ok {
 		t.Fatal("removed reasoning capability survived cache export")
 	}
 	if _, ok := afterRestart.Capture().Model(
-		ProviderSference,
-		"empty-options/Reasoning-Test",
+		ProviderOpenAI,
+		"reasoning-effort-test",
 	); ok {
 		t.Fatal("removed model survived cache export")
 	}
@@ -1307,7 +1339,7 @@ func TestProviderCacheWithoutModelsDevDoesNotInventValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := restored.Capture().ModelsDevValidatedAt(
-		ProviderSference,
+		ProviderOpenAI,
 	); !got.IsZero() {
 		t.Fatalf("invented models.dev validation time = %s", got)
 	}
