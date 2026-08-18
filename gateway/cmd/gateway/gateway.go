@@ -1190,7 +1190,7 @@ func (g *Gateway) forwardModelsGet(cl *clientListener, w http.ResponseWriter, r 
 			upClient = c
 		} else if fallback {
 			upClient = c
-			req.Header.Set("Authorization", "Api-Key "+cfg.SferenceKey)
+			req.Header.Set("Authorization", "Bearer "+cfg.SferenceKey)
 		} else {
 			g.rejectNeedsLogin(w)
 			return
