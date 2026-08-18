@@ -18,8 +18,8 @@ const liveCatalogFixture = `{
     {
       "id": "new/model",
       "pricing": {
-        "prompt": 0.000002,
-        "completion": 0.000003
+        "input_per_million_usd": 2.0,
+        "output_per_million_usd": 3.0
       }
     }
   ]
@@ -118,7 +118,7 @@ func TestCatalogRefreshFailureRetainsLastKnownGood(t *testing.T) {
 			_, _ = w.Write([]byte(liveCatalogFixture))
 			return
 		}
-		_, _ = w.Write([]byte(`{"data":[{"id":"new/model","pricing":{"prompt":-1}}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"new/model","pricing":{"input_per_million_usd":-1}}]}`))
 	}))
 	defer server.Close()
 
