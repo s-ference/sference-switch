@@ -90,8 +90,8 @@ func TestAdminModelCatalogReadyNormalizesAndSanitizesModels(t *testing.T) {
 		if r.URL.Scheme != "https" || r.URL.Host != "catalog.test" {
 			t.Errorf("upstream URL = %s, want https://catalog.test", r.URL)
 		}
-		if r.URL.Path != "/v1/model_apis" {
-			t.Errorf("path = %q, want /v1/model_apis", r.URL.Path)
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("path = %q, want /v1/models", r.URL.Path)
 		}
 		if got := r.URL.Query().Get("added_only"); got != "false" {
 			t.Errorf("added_only = %q, want false", got)
@@ -406,7 +406,7 @@ func TestModelCatalogReasoningProjectionUsesExactSferenceRecord(t *testing.T) {
 			CanonicalModelID: "zai-org/GLM-Test",
 			DisplayName:      "Account GLM Test",
 		}},
-		"sference_model_apis",
+		"sference_v1_models",
 		freshAvailabilityAt,
 		"sha256:fresh-availability",
 	); err != nil {
