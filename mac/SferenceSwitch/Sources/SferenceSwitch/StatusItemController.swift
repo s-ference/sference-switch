@@ -215,17 +215,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             added = true
         }
 
-        // Show a sudo explanation when the switch is off and not pending,
-        // so the user knows what happens before they toggle.
-        if !state.proxyEnabled && !state.proxyPending {
-            let item = disabledItem(
-                "Enabling the switch requires your macOS password\n" +
-                "(installs a system service and edits /etc/hosts)")
-            item.image = symbol("lock.shield")
-            menu.addItem(item)
-            added = true
-        }
-
         if state.snapshotIsStale, state.routingSnapshot != nil {
             let item = disabledItem("Showing Last Confirmed Routing State")
             item.image = symbol("wifi.exclamationmark")
