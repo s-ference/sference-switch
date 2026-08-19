@@ -182,6 +182,14 @@ final class SferenceSwitchState: ObservableObject {
                     self?.apply(event)
                 }
             }
+            // Read the intercept state at launch, not just on first menu
+            // open — otherwise the menu renders once with the initial
+            // proxyEnabled=false and shows the sudo warning next to an
+            // already-on toggle. Stable channel only: preview/test fixtures
+            // have no real binary to probe.
+            if variant.channel == .stable {
+                Task { await refreshProxyState() }
+            }
         }
     }
 
@@ -474,7 +482,9 @@ final class SferenceSwitchState: ObservableObject {
     /// (including the macOS admin password prompt).
     func requestProxyEnabled(_ enabled: Bool) -> Bool {
         guard !proxyPending,
-              proxyEnabled != enabled else { return false }
+              proxyEnabled != enabled else {
+            return false
+        }
         proxyPending = true
         Task { await setProxyEnabled(enabled) }
         return true
@@ -527,13 +537,21 @@ final class SferenceSwitchState: ObservableObject {
 
     /// Refreshes the proxy-enabled flag in the background without needing
     /// sudo: `intercept status` reads only the hosts file.
+    ///
+    /// This runs directly via `cliRunner` rather than `executeCLI`, because
+    /// `executeCLI` gates on routing *mutation* rights (`mutationAllowed`),
+    /// which fail when `runtimeTrust` is `.identityMismatch` or `.previewMismatch`
+    /// (e.g. after an ad-hoc re-sign). Reading `/etc/hosts` state is read-only
+    /// and must work regardless of mutation permission — otherwise the switch
+    /// appears to bounce back after a successful enable.
     func refreshProxyState() async {
         guard let binary = Self.locateSferenceSwitchBinary(variant: variant) else { return }
         proxyChecking = true
-        let result = await executeCLI(
-            ["intercept", "status"],
-            timeout: 5,
-            allowWhenPreviewDown: true)
+        let result = await cliRunner.run(CLIExecutionRequest(
+            binary: binary,
+            arguments: ["intercept", "status"],
+            environment: processEnvironment(),
+            timeout: 5))
         proxyChecking = false
         proxyEnabled = result.standardOutput.contains("intercept: on")
     }

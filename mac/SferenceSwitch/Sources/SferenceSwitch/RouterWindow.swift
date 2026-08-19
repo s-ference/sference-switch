@@ -694,10 +694,11 @@ private struct RoutingOverviewView: View {
                 Label("Overview", systemImage: "switch.2")
                     .font(.title2.weight(.semibold))
 
+                switchCard
+
                 liveRequestPath
 
                 if state.routingSnapshot != nil {
-                    routingGroup
                     statusGroup
                 } else {
                     stopped
@@ -715,6 +716,77 @@ private struct RoutingOverviewView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .accessibilityIdentifier("routing-overview")
+    }
+
+    /// The master on/off switch — same control as the menu bar toggle. This
+    /// flips the TLS intercept (proxy), which is what needs sudo; it is NOT
+    /// gated on `canMutateRouting`, so it stays usable even when the app
+    /// identity is in a mismatched (ad-hoc re-signed) state.
+    private var switchCard: some View {
+        RoutingSectionCard {
+            HStack {
+                Label("Switch", systemImage: "power")
+                    .font(.headline)
+                Spacer()
+                if state.proxyPending {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Applying switch change")
+                } else if state.proxyChecking {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Checking switch status")
+                }
+            }
+        } content: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(state.proxyEnabled
+                            ? "Switch is on"
+                            : "Switch is off")
+                            .font(.body.weight(.medium))
+                        Text(switchDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("", isOn: Binding(
+                        get: { state.proxyEnabled },
+                        set: { enabled in
+                            guard !isPreview else { return }
+                            _ = state.requestProxyEnabled(enabled)
+                        }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(isPreview || state.proxyPending)
+                    .accessibilityIdentifier("overview-switch-toggle")
+                    .accessibilityLabel("Switch")
+                    .accessibilityValue(state.proxyEnabled ? "On" : "Off")
+                }
+
+                Label(
+                    "Toggling the switch asks for your macOS password. Turning it on installs a system service and edits /etc/hosts so Sference can intercept supported coding traffic; turning it off removes them again.",
+                    systemImage: "lock.shield")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("overview-switch-sudo-warning")
+            }
+            .padding(6)
+        }
+        .accessibilityIdentifier("overview-switch-card")
+    }
+
+    private var switchDescription: String {
+        if state.proxyPending {
+            return "Applying the change. Wait for the system to confirm."
+        }
+        return state.proxyEnabled
+            ? "Supported coding traffic is intercepted and routed by your saved mappings. Turn off to go back to native providers."
+            : "Supported coding traffic goes to native providers. Turn on to intercept and route it with your saved mappings."
     }
 
     private var liveRequestPath: some View {
@@ -883,24 +955,6 @@ private struct RoutingOverviewView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var routingGroup: some View {
-        RoutingSectionCard {
-            Label("Global Routing", systemImage: "arrow.triangle.branch")
-                .font(.headline)
-        } content: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(globalTitle)
-                    .font(.body.weight(.medium))
-                Text(globalDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(6)
-        }
-        .accessibilityIdentifier("overview-global-routing")
-    }
-
     private var statusGroup: some View {
         RoutingSectionCard {
             Label("System Status", systemImage: "info.circle")
@@ -952,14 +1006,6 @@ private struct RoutingOverviewView: View {
             .accessibilityIdentifier("start-sference-switch")
         }
         .frame(maxWidth: .infinity, minHeight: 320)
-    }
-
-    private var globalTitle: String {
-        globalPresentation.overviewTitle
-    }
-
-    private var globalDescription: String {
-        globalPresentation.overviewDescription
     }
 
     private var globalPresentation: WindowGlobalRoutingPresentation {
