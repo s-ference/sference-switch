@@ -120,13 +120,13 @@ func TestReasoningPolicyToggleOffAfterEveryMessagesTargetResolver(
 			model: "claude-opus-4-8",
 		},
 		{
-			name: "Nemotron alias",
+			name: "DeepSeek alias",
 			configure: func(rc *resolvedClientConfig, _ *http.Request) {
 				rc.ModelAliases = map[string]string{
-					"claude-sference-nemotron": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+					"claude-sference-deepseek": "deepseek-ai/DeepSeek-V4-Flash",
 				}
 			},
-			model: "claude-sference-nemotron",
+			model: "claude-sference-deepseek",
 		},
 		{
 			name: "GLM raw slug",
