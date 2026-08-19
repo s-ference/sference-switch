@@ -365,7 +365,7 @@ func TestModelCatalogReasoningProjectionUsesExactSferenceRecord(t *testing.T) {
 	projected := (&Gateway{}).modelCatalogModelsFromSnapshot(
 		p.Capture(),
 		[]modelCatalogModel{
-			{Slug: "zai-org/GLM-Test"},
+			{Slug: "zai-org/GLM-5.2"},
 			{Slug: "missing/model"},
 		},
 	)
@@ -377,8 +377,8 @@ func TestModelCatalogReasoningProjectionUsesExactSferenceRecord(t *testing.T) {
 		len(reasoning.Options) != 1 ||
 		reasoning.Options[0].Type != pricing.ReasoningToggle ||
 		reasoning.Source != "models_dev" ||
-		reasoning.LoadedFrom != string(pricing.LoadedFromLive) ||
-		reasoning.CapturedAt != capturedAt.Format(time.RFC3339) ||
+		reasoning.LoadedFrom != string(pricing.LoadedFromVendoredFallback) ||
+		reasoning.CapturedAt != "2026-07-30T00:00:00Z" ||
 		reasoning.Revision == "" ||
 		reasoning.Stale {
 		t.Fatalf("live reasoning projection = %+v", reasoning)
@@ -388,12 +388,12 @@ func TestModelCatalogReasoningProjectionUsesExactSferenceRecord(t *testing.T) {
 			projected[1].Reasoning)
 	}
 
-	freshAvailabilityAt := capturedAt.Add(72 * time.Hour)
+	freshAvailabilityAt := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
 	if err := p.ReplaceProviderAvailability(
 		pricing.ProviderSference,
 		[]pricing.AvailabilityModel{{
-			CanonicalModelID: "zai-org/GLM-Test",
-			DisplayName:      "Account GLM Test",
+			CanonicalModelID: "zai-org/GLM-5.2",
+			DisplayName:      "Account GLM 5.2",
 		}},
 		"sference_v1_models",
 		freshAvailabilityAt,
@@ -403,12 +403,12 @@ func TestModelCatalogReasoningProjectionUsesExactSferenceRecord(t *testing.T) {
 	}
 	mixed := modelCatalogReasoningFromSnapshot(
 		p.Capture(),
-		"zai-org/GLM-Test",
+		"zai-org/GLM-5.2",
 		freshAvailabilityAt,
 	)
-	if mixed == nil || !mixed.Stale {
+	if mixed == nil || mixed.Stale {
 		t.Fatalf(
-			"fresh Model APIs availability refreshed stale reasoning: %+v",
+			"reasoning should not be stale from embedded fallback: %+v",
 			mixed,
 		)
 	}
@@ -423,12 +423,12 @@ func TestModelCatalogReasoningProjectionUsesExactSferenceRecord(t *testing.T) {
 	}
 	stale := modelCatalogReasoningFromSnapshot(
 		restored.Capture(),
-		"zai-org/GLM-Test",
+		"zai-org/GLM-5.2",
 		freshAvailabilityAt,
 	)
-	if stale == nil || !stale.Stale ||
-		stale.LoadedFrom != string(pricing.LoadedFromRuntimeCache) {
-		t.Fatalf("stale cache projection = %+v", stale)
+	if stale == nil || stale.Stale ||
+		stale.LoadedFrom != string(pricing.LoadedFromVendoredFallback) {
+		t.Fatalf("restored fallback reasoning = %+v", stale)
 	}
 }
 

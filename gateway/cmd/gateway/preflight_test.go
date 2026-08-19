@@ -128,8 +128,8 @@ func TestSferenceRoutedClients(t *testing.T) {
 }
 
 func TestRunPreflightBanner(t *testing.T) {
-	oauthAuthJSON := `{"version":1,"current":"me","profiles":{"me":{"remote_url":"https://api.sference.com","auth_type":"oauth","oauth_credential":{"access_token":"at","refresh_token":"rt"}}}}`
-	apiKeyAuthJSON := `{"version":1,"current":"svc","profiles":{"svc":{"remote_url":"https://api.sference.com","auth_type":"api_key","api_key":"sk-1"}}}`
+	oauthAuthJSON := `{"token":"sk-preflight-oauth-test"}`
+	apiKeyAuthJSON := `{"token":"sk-preflight-test-key"}`
 
 	cases := []struct {
 		name       string

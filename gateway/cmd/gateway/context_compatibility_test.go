@@ -55,8 +55,8 @@ func TestContextCompatibilityWarning(t *testing.T) {
 	million := int64(1_000_000)
 	if got := contextCompatibilityWarning(
 		p.Capture(),
-		pricing.ProviderSference,
-		"zai-org/GLM-5.2",
+		pricing.ProviderOpenAI,
+		"gpt-5",
 		&million,
 	); got == "" {
 		t.Fatal("expected a warning for a target with a smaller known context limit")
