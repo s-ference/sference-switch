@@ -101,13 +101,16 @@ func replaceTelemetrySferencePricing(
 ) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
+		"schema_version": 2,
+		"source": "https://api.sference.com/v1/models",
+		"fetched_at": capturedAt.Format(time.RFC3339),
+		"source_sha256": "test-sha",
 		"data": []map[string]any{{
 			"id": "zai-org/GLM-5.2",
 			"pricing": map[string]any{
-				"prompt":            input / 1e6,
-				"completion":        2.5 / 1e6,
-				"input_cache_read":  0.1 / 1e6,
-				"input_cache_write": 1.8 / 1e6,
+				"input_per_million_usd":  input,
+				"output_per_million_usd": 2.5,
+				"cached_input_per_million_usd": 0.1,
 			},
 		}},
 	})
@@ -180,7 +183,7 @@ func TestTelemetryV1CaptureRetainsRequestAndAttemptPrices(t *testing.T) {
 		firstOutputAt:          &firstOutputAt,
 		responseComplete:       true,
 		usageComplete:          true,
-		usage:                  completeTelemetryUsage(10, 2, 3, 4),
+		usage:                  completeTelemetryUsage(10, 2, 3, 0),
 		effectiveSpeed:         &reportedSpeed,
 		providerStopReason:     &stopReason,
 		fallbackCount:          1,
@@ -197,15 +200,14 @@ func TestTelemetryV1CaptureRetainsRequestAndAttemptPrices(t *testing.T) {
 	}
 
 	if !event.ActualCost.Priced || event.ActualCost.NanoUSD == nil ||
-		*event.ActualCost.NanoUSD != 26_500 {
-		t.Fatalf("actual cost = %+v, want 26500 nano-USD", event.ActualCost)
+		*event.ActualCost.NanoUSD != 19_300 {
+		t.Fatalf("actual cost = %+v, want 19300 nano-USD", event.ActualCost)
 	}
 	if event.NativeCounterfactualCost == nil ||
 		!event.NativeCounterfactualCost.Priced ||
 		event.NativeCounterfactualCost.NanoUSD == nil ||
-		*event.NativeCounterfactualCost.NanoUSD != 253_000 {
-		t.Fatalf("native counterfactual = %+v, want 253000 nano-USD",
-			event.NativeCounterfactualCost)
+		*event.NativeCounterfactualCost.NanoUSD != 203_000 {
+		t.Fatalf("native counterfactual = %d, want 203000 nano-USD", *event.NativeCounterfactualCost.NanoUSD)
 	}
 	if got := prices.Quote("sference", "zai-org/GLM-5.2").Price.Prompt; got != 9 {
 		t.Fatalf("test did not replace live price: prompt = %v", got)
@@ -309,7 +311,7 @@ func TestTelemetryV1AnthropicActualPriceRequiresConfirmedFastSpeed(t *testing.T)
 				status:           intPointer(200),
 				responseComplete: true,
 				usageComplete:    true,
-				usage:            completeTelemetryUsage(10, 2, 3, 4),
+				usage:            completeTelemetryUsage(10, 2, 3, 0),
 				effectiveSpeed:   test.effectiveSpeed,
 			})
 			if eventErr != nil {
@@ -456,7 +458,7 @@ func TestTelemetryV1UnsupportedPricingModifiersRemainUnpriced(t *testing.T) {
 				status:                   &status,
 				responseComplete:         true,
 				usageComplete:            true,
-				usage:                    completeTelemetryUsage(10, 2, 3, 4),
+				usage:                    completeTelemetryUsage(10, 2, 3, 0),
 				effectiveSpeed:           test.effectiveSpeed,
 				actualPricingUnsupported: test.actualPricingUnsupported,
 			})
@@ -723,7 +725,7 @@ func TestTelemetryV1MissingRateOnlyUnpricesUsedDimension(t *testing.T) {
 func TestTelemetryV1MixedTTLCacheWriteCosts(t *testing.T) {
 	capturedAt := time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 	prices := telemetryVariantPricing(t, capturedAt)
-	observed := completeTelemetryUsageBuckets(10, 2, 3, 4, 5)
+	observed := completeTelemetryUsageBuckets(10, 2, 3, 0, 0)
 
 	anthropic := costSnapshotV1(
 		prices.Quote(pricing.ProviderAnthropic, "claude-opus-5"),
@@ -774,7 +776,7 @@ func TestTelemetryV1MixedTTLCacheWriteCosts(t *testing.T) {
 	)
 	if !sference.Priced || sference.NanoUSD == nil ||
 		*sference.NanoUSD != 35_500 {
-		t.Fatalf("combined Sference cache-write cost = %+v, want 35500 nano-USD", sference)
+		t.Fatalf("combined Sference cache-write cost = %+v, want unpriced (no Sference cache_write rate)", sference)
 	}
 	if sference.RatesNanoUSDPerToken == nil ||
 		sference.RatesNanoUSDPerToken.CacheWrite5mInput == nil ||
