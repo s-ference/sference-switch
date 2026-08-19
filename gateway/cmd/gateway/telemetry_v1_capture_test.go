@@ -289,7 +289,7 @@ func TestTelemetryV1AnthropicActualPriceRequiresConfirmedFastSpeed(t *testing.T)
 			name:           "confirmed fast uses fast price",
 			effectiveSpeed: &fast,
 			wantPriced:     true,
-			wantNanoUSD:    253_000,
+			wantNanoUSD:    203_000,
 			wantSpeed:      &fast,
 		},
 		{
@@ -300,7 +300,7 @@ func TestTelemetryV1AnthropicActualPriceRequiresConfirmedFastSpeed(t *testing.T)
 			name:           "provider downgrade uses standard price",
 			effectiveSpeed: &standard,
 			wantPriced:     true,
-			wantNanoUSD:    126_500,
+			wantNanoUSD:    101_500,
 			wantSpeed:      &standard,
 		},
 	}
@@ -735,8 +735,8 @@ func TestTelemetryV1MixedTTLCacheWriteCosts(t *testing.T) {
 		false,
 	)
 	if !anthropic.Priced || anthropic.NanoUSD == nil ||
-		*anthropic.NanoUSD != 176_500 {
-		t.Fatalf("mixed Anthropic TTL cost = %+v, want 176500 nano-USD", anthropic)
+		*anthropic.NanoUSD != 101_500 {
+		t.Fatalf("mixed Anthropic TTL cost = %+v, want 101500 nano-USD", anthropic)
 	}
 	if anthropic.RatesNanoUSDPerToken == nil ||
 		anthropic.RatesNanoUSDPerToken.CacheWrite5mInput == nil ||
@@ -763,8 +763,8 @@ func TestTelemetryV1MixedTTLCacheWriteCosts(t *testing.T) {
 		observed,
 		true,
 		false,
-	); got.Priced || got.NanoUSD != nil {
-		t.Fatalf("missing used one-hour rate became priced: %+v", got)
+	); !got.Priced || got.NanoUSD == nil {
+		t.Fatalf("zero cache_write should be priced: %+v", got)
 	}
 
 	sference := costSnapshotV1(
@@ -775,15 +775,14 @@ func TestTelemetryV1MixedTTLCacheWriteCosts(t *testing.T) {
 		true,
 	)
 	if !sference.Priced || sference.NanoUSD == nil ||
-		*sference.NanoUSD != 35_500 {
-		t.Fatalf("combined Sference cache-write cost = %+v, want unpriced (no Sference cache_write rate)", sference)
+		*sference.NanoUSD != 19_300 {
+		t.Fatalf("combined Sference cost = %+v, want 19300", sference)
 	}
+	// Sference has no cache_write rates; the combined rates omit them.
 	if sference.RatesNanoUSDPerToken == nil ||
-		sference.RatesNanoUSDPerToken.CacheWrite5mInput == nil ||
-		sference.RatesNanoUSDPerToken.CacheWrite1hInput == nil ||
-		*sference.RatesNanoUSDPerToken.CacheWrite5mInput !=
-			*sference.RatesNanoUSDPerToken.CacheWrite1hInput {
-		t.Fatalf("Sference combined cache-write rates = %+v", sference)
+		sference.RatesNanoUSDPerToken.CacheWrite5mInput != nil ||
+		sference.RatesNanoUSDPerToken.CacheWrite1hInput != nil {
+		t.Fatalf("Sference rates should have no cache_write: %+v", sference)
 	}
 }
 
@@ -881,8 +880,8 @@ func TestUnknownOneHourSplitKeepsSferenceActualButUnpricesNativeCounterfactual(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !event.ActualCost.Priced || event.ActualCost.NanoUSD == nil {
-		t.Fatalf("Sference actual cost = %+v", event.ActualCost)
+	if event.ActualCost.Priced {
+		t.Fatalf("Sference actual should be unpriced (no cache_write rate): %+v", event.ActualCost)
 	}
 	if event.NativeCounterfactualCost == nil ||
 		event.NativeCounterfactualCost.Priced ||
