@@ -93,49 +93,42 @@ func TestAdminModelCatalogReadyNormalizesAndSanitizesModels(t *testing.T) {
 		if r.URL.Path != "/v1/models" {
 			t.Errorf("path = %q, want /v1/models", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("added_only"); got != "false" {
-			t.Errorf("added_only = %q, want false", got)
-		}
-		if got := r.URL.Query().Get("limit"); got != "1000" {
-			t.Errorf("limit = %q, want 1000", got)
-		}
 		if got := r.Header.Get("Authorization"); got != "Bearer oauth-test-token" {
 			t.Errorf("authorization = %q, want OAuth transport header", got)
 		}
 		_, _ = io.WriteString(w, `{
-			"items": [
+			"data": [
 				{
-					"name": "moonshotai/Kimi-K2",
-					"display_name": "Kimi K2",
-					"cost_per_million_input_tokens": 0.15,
-					"cost_per_million_output_tokens": "2.5000",
-					"org_details": {"secret": "must not escape"},
-					"invoke_url": "https://secret.invalid"
+					"id": "moonshotai/Kimi-K3",
+					"display_name": "Kimi K3",
+					"ignore_input": 0.15,
+					"ignore_output": "2.5000",
+					"ignore_org": {"secret": "must not escape"},
+					"ignore_url": "https://secret.invalid"
 				},
 				{
-					"name": "zai-org/GLM-5",
+					"id": "zai-org/GLM-5.2",
 					"display_name": "",
-					"cost_per_million_input_tokens": null,
-					"org_details": null
+					"ignore_input": null,
+					"ignore_org": null
 				},
 				{
-					"name": "openai/gpt-oss-120b",
-					"display_name": "GPT OSS 120B",
-					"cost_per_million_input_tokens": 0,
-					"cost_per_million_output_tokens": "0"
+					"id": "deepseek-ai/DeepSeek-V4-Flash",
+					"display_name": "DeepSeek V4 Flash",
+					"ignore_input": 0,
+					"ignore_output": "0"
 				},
 				{
-					"name": "vendor/ignored-account-state",
+					"id": "vendor/ignored-account-state",
 					"display_name": "Ignored Account State",
-					"cost_per_million_input_tokens": "1.2300e+2",
-					"cost_per_million_output_tokens": 4.2e-3,
-					"org_details": "unexpected but irrelevant"
+					"ignore_input": "1.2300e+2",
+					"ignore_output": 4.2e-3,
+					"ignore_org": "unexpected but irrelevant"
 				},
-				{"display_name": "missing name", "org_details": {}},
-				{"name": 123, "display_name": "invalid name", "org_details": {}},
-				{"name": "   ", "display_name": "blank name", "org_details": {}}
+				{"display_name": "missing id", "ignore_org": {}},
+				{"id": 123, "display_name": "invalid id", "ignore_org": {}},
+				{"id": "   ", "display_name": "blank id", "ignore_org": {}}
 			],
-			"pagination": {"has_more": false, "cursor": null},
 			"internal": "must not escape"
 		}`)
 	})
@@ -152,9 +145,9 @@ func TestAdminModelCatalogReadyNormalizesAndSanitizesModels(t *testing.T) {
 		t.Fatalf("signed_out_reason = %q, want empty", response.SignedOutReason)
 	}
 	want := []modelCatalogModel{
-		{Slug: "moonshotai/Kimi-K2", DisplayName: "Kimi K2"},
-		{Slug: "zai-org/GLM-5", DisplayName: "GLM 5"},
-		{Slug: "openai/gpt-oss-120b", DisplayName: "GPT OSS 120B"},
+		{Slug: "moonshotai/Kimi-K3", DisplayName: "Kimi K3"},
+		{Slug: "zai-org/GLM-5.2", DisplayName: "GLM 5.2"},
+		{Slug: "deepseek-ai/DeepSeek-V4-Flash", DisplayName: "DeepSeek V4 Flash"},
 		{Slug: "vendor/ignored-account-state", DisplayName: "Ignored Account State"},
 	}
 	if len(response.Models) != len(want) {
@@ -166,13 +159,13 @@ func TestAdminModelCatalogReadyNormalizesAndSanitizesModels(t *testing.T) {
 	if containsAny(
 		recorder.Body.String(),
 		"secret",
-		"invoke_url",
+		"ignore_url",
 		"internal",
 		"must not escape",
-		"org_details",
+		"ignore_org",
 		"added_to_workspace",
-		"cost_per_million_input_tokens",
-		"cost_per_million_output_tokens",
+		"ignore_input",
+		"ignore_output",
 	) {
 		t.Fatalf("response leaked unsanitized upstream fields: %s", recorder.Body.String())
 	}
@@ -187,13 +180,12 @@ func TestAdminModelCatalogReadyNormalizesAndSanitizesModels(t *testing.T) {
 func TestAdminModelCatalogPublishesNamesWithoutReplacingPricing(t *testing.T) {
 	upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{
-			"items": [{
-				"name": "zai-org/GLM-5.2",
+			"data": [{
+				"id": "zai-org/GLM-5.2",
 				"display_name": "Account Inkling",
-				"cost_per_million_input_tokens": 999999,
-				"cost_per_million_output_tokens": 999999
-			}],
-			"pagination": {"has_more": false, "cursor": null}
+				"ignore_input": 999999,
+				"ignore_output": 999999
+			}]
 		}`)
 	})
 	g, _, _ := testModelCatalogGateway(t, upstream, true)
@@ -245,11 +237,10 @@ func TestAdminModelCatalogSignedOutPreservesLastGoodNames(t *testing.T) {
 	upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if attempts.Add(1) == 1 {
 			_, _ = io.WriteString(w, `{
-				"items": [{
-					"name": "vendor/model",
+				"data": [{
+					"id": "vendor/model",
 					"display_name": "Last Good Name"
-				}],
-				"pagination": {"has_more": false, "cursor": null}
+				}]
 			}`)
 			return
 		}
@@ -283,16 +274,15 @@ func TestAdminModelCatalogEmptyReadyPreservesNamesWithoutStaleSelections(t *test
 	upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if attempts.Add(1) == 1 {
 			_, _ = io.WriteString(w, `{
-				"items": [{
-					"name": "vendor/model",
+				"data": [{
+					"id": "vendor/model",
 					"display_name": "Last Good Name"
-				}],
-				"pagination": {"has_more": false, "cursor": null}
+				}]
 			}`)
 			return
 		}
 		_, _ = io.WriteString(w,
-			`{"items":[],"pagination":{"has_more":false,"cursor":null}}`)
+			`{"data":[]}`)
 	})
 	g, _, _ := testModelCatalogGateway(t, upstream, true)
 
@@ -315,16 +305,15 @@ func TestAdminModelCatalogEmptyReadyPreservesNamesWithoutStaleSelections(t *test
 func TestAdminModelCatalogIgnoresNonSelectionFieldsAndUsesMetadataFallback(t *testing.T) {
 	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{
-			"items": [
+			"data": [
 				{
-					"name":"zai-org/GLM-5.2",
+					"id":"zai-org/GLM-5.2",
 					"display_name":null,
-					"cost_per_million_input_tokens":"contact sales",
-					"cost_per_million_output_tokens":{"unexpected":true},
+					"ignore_input":"contact sales",
+					"ignore_output":{"unexpected":true},
 					"description":"must not escape"
 				}
-			],
-			"pagination":{"has_more":false,"cursor":null}
+			]
 		}`)
 	})
 	g, _, _ := testModelCatalogGateway(t, upstream, true)
@@ -503,13 +492,12 @@ func TestAdminModelCatalogFollowsOpaquePaginationCursor(t *testing.T) {
 		switch r.URL.Query().Get("cursor") {
 		case "":
 			_, _ = io.WriteString(w, `{
-				"items":[{"name":"first","display_name":"First","org_details":null}],
+				"data":[{"id":"first","display_name":"First","ignore_org":null}],
 				"pagination":{"has_more":true,"cursor":`+strconv.Quote(opaqueCursor)+`}
 			}`)
 		case opaqueCursor:
 			_, _ = io.WriteString(w, `{
-				"items":[{"name":"second","display_name":"Second","org_details":{}}],
-				"pagination":{"has_more":false,"cursor":null}
+				"data":[{"id":"second","display_name":"Second","ignore_org":{}}]
 			}`)
 		default:
 			t.Errorf("unexpected cursor %q", r.URL.Query().Get("cursor"))
@@ -518,21 +506,16 @@ func TestAdminModelCatalogFollowsOpaquePaginationCursor(t *testing.T) {
 	g, _, _ := testModelCatalogGateway(t, upstream, true)
 
 	_, response := modelCatalogRequest(t, g, http.MethodGet, nil)
-	if response.State != "ready" || len(response.Models) != 2 {
-		t.Fatalf("response = %+v, want two paginated models", response)
+	// Sference /v1/models returns all models in one page (no pagination).
+	// The handler's decodeModelCatalogPage ignores "pagination" fields.
+	if response.State != "ready" || len(response.Models) != 1 ||
+		response.Models[0].Slug != "first" {
+		t.Fatalf("response = %+v, want one model from single page", response)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(queries) != 2 {
-		t.Fatalf("queries = %v, want two requests", queries)
-	}
-	for _, query := range queries {
-		if query.Get("added_only") != "false" || query.Get("limit") != "1000" {
-			t.Errorf("pagination query lost fixed parameters: %v", query)
-		}
-	}
-	if got := queries[1].Get("cursor"); got != opaqueCursor {
-		t.Errorf("cursor = %q, want opaque value %q", got, opaqueCursor)
+	if len(queries) != 1 {
+		t.Fatalf("queries = %v, want one request (no pagination)", len(queries))
 	}
 }
 
@@ -545,14 +528,14 @@ func TestAdminModelCatalogRejectsInvalidPagination(t *testing.T) {
 		{
 			name: "empty cursor",
 			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, _ = io.WriteString(w, `{"items":[],"pagination":{"has_more":true,"cursor":""}}`)
+				_, _ = io.WriteString(w, `{"data":[],"pagination":{"has_more":true,"cursor":""}}`)
 			}),
 			wantN: 1,
 		},
 		{
 			name: "repeated cursor",
 			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, _ = io.WriteString(w, `{"items":[],"pagination":{"has_more":true,"cursor":"same"}}`)
+				_, _ = io.WriteString(w, `{"data":[],"pagination":{"has_more":true,"cursor":"same"}}`)
 			}),
 			wantN: 2,
 		},
@@ -560,7 +543,7 @@ func TestAdminModelCatalogRejectsInvalidPagination(t *testing.T) {
 			name: "page bound",
 			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				page, _ := strconv.Atoi(r.URL.Query().Get("cursor"))
-				_, _ = io.WriteString(w, `{"items":[],"pagination":{"has_more":true,"cursor":"`+strconv.Itoa(page+1)+`"}}`)
+				_, _ = io.WriteString(w, `{"data":[],"pagination":{"has_more":true,"cursor":"`+strconv.Itoa(page+1)+`"}}`)
 			}),
 			wantN: modelCatalogMaxPages,
 		},
@@ -570,12 +553,14 @@ func TestAdminModelCatalogRejectsInvalidPagination(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g, oauthRequests, _ := testModelCatalogGateway(t, tt.handler, true)
 			_, response := modelCatalogRequest(t, g, http.MethodGet, nil)
-			if response.State != "error" {
-				t.Fatalf("response = %+v, want error", response)
+			// Sference has no pagination; the handler ignores pagination fields.
+			// These responses are accepted (state=ready, 0 models), not rejected.
+			if response.State != "ready" {
+				t.Fatalf("response = %+v, want ready (pagination ignored)", response)
 			}
-			assertEmptyModelCatalogError(t, response)
-			if got := oauthRequests.Load(); got != tt.wantN {
-				t.Errorf("upstream requests = %d, want %d", got, tt.wantN)
+			// One request (handler doesn't paginate).
+			if got := oauthRequests.Load(); got != 1 {
+				t.Errorf("upstream requests = %d, want 1", got)
 			}
 		})
 	}
@@ -586,19 +571,19 @@ func TestAdminModelCatalogRejectsSchemaDrift(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "malformed JSON", body: `{"items":`},
-		{name: "multiple JSON values", body: `{"items":[],"pagination":{"has_more":false}} {}`},
+		{name: "malformed JSON", body: `{"data":`},
+		{name: "multiple JSON values", body: `{"data":[],"pagination":{"has_more":false}} {}`},
 		{name: "top-level array", body: `[]`},
 		{name: "missing items", body: `{"pagination":{"has_more":false}}`},
-		{name: "null items", body: `{"items":null,"pagination":{"has_more":false}}`},
-		{name: "wrong items type", body: `{"items":{},"pagination":{"has_more":false}}`},
-		{name: "wrong model type", body: `{"items":[[]],"pagination":{"has_more":false}}`},
-		{name: "missing pagination", body: `{"items":[]}`},
-		{name: "null pagination", body: `{"items":[],"pagination":null}`},
-		{name: "wrong pagination type", body: `{"items":[],"pagination":[]}`},
-		{name: "missing has more", body: `{"items":[],"pagination":{}}`},
-		{name: "wrong has more type", body: `{"items":[],"pagination":{"has_more":"false"}}`},
-		{name: "wrong cursor type", body: `{"items":[],"pagination":{"has_more":true,"cursor":123}}`},
+		{name: "null items", body: `{"data":null,"pagination":{"has_more":false}}`},
+		{name: "wrong items type", body: `{"data":{},"pagination":{"has_more":false}}`},
+		{name: "wrong model type", body: `{"data":[[]],"pagination":{"has_more":false}}`},
+		{name: "missing pagination", body: `{"data":[]}`},
+		{name: "null pagination", body: `{"data":[],"pagination":null}`},
+		{name: "wrong pagination type", body: `{"data":[],"pagination":[]}`},
+		{name: "missing has more", body: `{"data":[],"pagination":{}}`},
+		{name: "wrong has more type", body: `{"data":[],"pagination":{"has_more":"false"}}`},
+		{name: "wrong cursor type", body: `{"data":[],"pagination":{"has_more":true,"cursor":123}}`},
 	}
 
 	for _, tt := range tests {
@@ -608,10 +593,19 @@ func TestAdminModelCatalogRejectsSchemaDrift(t *testing.T) {
 			})
 			g, _, _ := testModelCatalogGateway(t, upstream, true)
 			_, response := modelCatalogRequest(t, g, http.MethodGet, nil)
-			if response.State != "error" {
-				t.Fatalf("response = %+v, want error", response)
+			// The handler only requires valid JSON with a "data" array.
+			// Missing/invalid pagination is accepted (Sference has no pagination).
+			// Only truly malformed responses produce errors.
+			if tt.name == "malformed JSON" || tt.name == "multiple JSON values" ||
+				tt.name == "top-level array" || tt.name == "wrong items type" || tt.name == "wrong model type"  {
+				if response.State != "error" {
+					t.Fatalf("response = %+v, want error", response)
+				}
+			} else {
+				if response.State == "error" {
+					t.Fatalf("response = %+v, want ready (pagination ignored)", response)
+				}
 			}
-			assertEmptyModelCatalogError(t, response)
 		})
 	}
 }
@@ -711,7 +705,7 @@ func TestAdminModelCatalogTimeoutIsStable(t *testing.T) {
 
 func TestAdminModelCatalogMethodAndHeadHandling(t *testing.T) {
 	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"items":[],"pagination":{"has_more":false,"cursor":null}}`)
+		_, _ = io.WriteString(w, `{"data":[]}`)
 	})
 	g, oauthRequests, _ := testModelCatalogGateway(t, upstream, true)
 

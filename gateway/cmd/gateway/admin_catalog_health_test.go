@@ -33,7 +33,6 @@ func TestModelCatalogHealthJSONReportsEveryProvider(t *testing.T) {
 	for _, provider := range []string{
 		pricing.ProviderAnthropic,
 		pricing.ProviderOpenAI,
-		pricing.ProviderSference,
 	} {
 		raw, ok := result[provider]
 		if !ok {
@@ -72,6 +71,22 @@ func TestModelCatalogHealthJSONReportsEveryProvider(t *testing.T) {
 		if health["last_error"] != nil {
 			t.Errorf("%s last_error = %v, want null", provider, health["last_error"])
 		}
+	}
+
+	// Sference pricing comes from the embedded fallback, not models.dev.
+	sferenceRaw, sferenceOk := result[pricing.ProviderSference]
+	if !sferenceOk {
+		t.Fatal("model catalog health missing sference")
+	}
+	sferenceHealth, ok := sferenceRaw.(map[string]any)
+	if !ok {
+		t.Fatal("sference health type =", sferenceRaw)
+	}
+	if sferenceHealth["source"] != "sference_embedded_fallback" {
+		t.Errorf("sference source = %v", sferenceHealth["source"])
+	}
+	if sferenceHealth["loaded_from"] != string(pricing.LoadedFromVendoredFallback) {
+		t.Errorf("sference loaded_from = %v", sferenceHealth["loaded_from"])
 	}
 
 	anthropic := result[pricing.ProviderAnthropic].(map[string]any)
