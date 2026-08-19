@@ -140,7 +140,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
             SWIFTPM_MODULECACHE_OVERRIDE="$SWIFT_MODULE_CACHE" \
             swift test --disable-sandbox --scratch-path "$SWIFT_BUILD"
     ) > "$TMPDIR_CHECK/swifttest.out" 2>&1 \
-        || { tail -40 "$TMPDIR_CHECK/swifttest.out"; fail "swift test"; }
+        || { cat "$TMPDIR_CHECK/swifttest.out"; fail "swift test"; }
     SWIFT_TEST_COUNT="$(
         grep -E 'Executed [0-9]+ tests,' "$TMPDIR_CHECK/swifttest.out" \
             | tail -1 \
