@@ -180,7 +180,7 @@ struct AppVariant: Equatable {
     static let previewBundleIdentifier = "co.sference.switch.preview"
     static let stableExecutableName = "SferenceSwitch"
     static let previewExecutableName = "SferenceSwitchPreview"
-    static let stableDisplayName = "Sference"
+    static let stableDisplayName = "Sference Switch"
     static let previewDisplayName = "Sference Switch Preview"
 
     static func current(
