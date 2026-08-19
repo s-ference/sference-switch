@@ -31,7 +31,7 @@
           src = self;
           modRoot = "gateway";
           subPackages = [ "cmd/sference-switch" ];
-          vendorHash = "sha256-wOrYrtvL+7qecoaFfH75KdxBOFeba0zG09LEIvLpO5o=";
+          vendorHash = "sha256-xrIfUaIOjwVmsdtW1yiqv0Pbhns7USl2GQaW0mJp7bI=";
           ldflags = [ "-X github.com/sference/sference-switch/gateway/internal/version.Version=${version}" ];
         };
       });
