@@ -1,6 +1,6 @@
 module github.com/sference/sference-switch/gateway
 
-go 1.26.6
+go 1.26
 
 require (
 	github.com/zalando/go-keyring v0.2.8
