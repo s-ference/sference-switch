@@ -210,8 +210,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // so the user knows what happens before they toggle.
         if !state.proxyEnabled && !state.proxyPending {
             let item = disabledItem(
-                "Enabling the switch requires your macOS password " +
-                "(installs a system daemon and edits /etc/hosts)")
+                "Enabling the switch requires your macOS password\n" +
+                "(installs a system service and edits /etc/hosts)")
             item.image = symbol("lock.shield")
             menu.addItem(item)
             added = true
