@@ -37,8 +37,8 @@ const adminReasoningCatalogFixture = `{
         "reasoning": true,
         "reasoning_options": [{"type": "toggle"}]
       },
-      "moonshotai/Kimi-K2.7-Code": {
-        "id": "moonshotai/Kimi-K2.7-Code",
+      "moonshotai/Kimi-K3": {
+        "id": "moonshotai/Kimi-K3",
         "name": "Kimi K2.7 Code",
         "reasoning": true,
         "reasoning_options": [{"type": "toggle"}]
@@ -49,8 +49,8 @@ const adminReasoningCatalogFixture = `{
         "reasoning": true,
         "reasoning_options": [{"type": "toggle"}]
       },
-      "deepseek-ai/DeepSeek-V4-Pro": {
-        "id": "deepseek-ai/DeepSeek-V4-Pro",
+      "deepseek-ai/DeepSeek-V4-Flash": {
+        "id": "deepseek-ai/DeepSeek-V4-Flash",
         "name": "DeepSeek V4 Pro",
         "reasoning": true,
         "reasoning_options": [
@@ -92,7 +92,7 @@ func TestClientReasoningProjectionDeduplicatesReachableTargets(t *testing.T) {
 		DefaultModel:  "zai-org/GLM-5.2",
 		ModelAliases: map[string]string{
 			"claude-sference-glm":  "zai-org/GLM-5.2",
-			"claude-sference-kimi": "moonshotai/Kimi-K2.7-Code",
+			"claude-sference-kimi": "moonshotai/Kimi-K3",
 		},
 		ModelRoutes: map[string]string{
 			"opus":   "claude-sference-glm",
@@ -104,7 +104,7 @@ func TestClientReasoningProjectionDeduplicatesReachableTargets(t *testing.T) {
 				"zai-org/GLM-5.2": {},
 				// An explicit raw slug is reachable on an Anthropic
 				// client even when it is not a current route surface.
-				"deepseek-ai/DeepSeek-V4-Pro": {},
+				"deepseek-ai/DeepSeek-V4-Flash": {},
 			},
 		},
 	}
@@ -126,7 +126,7 @@ func TestClientReasoningProjectionDeduplicatesReachableTargets(t *testing.T) {
 		glm.Error != "" {
 		t.Fatalf("GLM projection = %+v", glm)
 	}
-	kimi := models["moonshotai/Kimi-K2.7-Code"].Reasoning
+	kimi := models["moonshotai/Kimi-K3"].Reasoning
 	if kimi == nil ||
 		kimi.Effective.Mode != "off" ||
 		kimi.Source != "compatibility_default" ||
@@ -136,12 +136,14 @@ func TestClientReasoningProjectionDeduplicatesReachableTargets(t *testing.T) {
 		kimi.AvailableModes[1] != "follow_harness" {
 		t.Fatalf("Kimi projection = %+v", kimi)
 	}
-	deepseek := models["deepseek-ai/DeepSeek-V4-Pro"].Reasoning
+	deepseek := models["deepseek-ai/DeepSeek-V4-Flash"].Reasoning
 	if deepseek == nil ||
-		deepseek.Effective.Mode != "passthrough" ||
-		deepseek.Source != "internal_passthrough" ||
+		deepseek.Effective.Mode != "off" ||
+		deepseek.Source != "compatibility_default" ||
 		!deepseek.Available ||
-		len(deepseek.AvailableModes) != 0 ||
+		len(deepseek.AvailableModes) != 2 ||
+		deepseek.AvailableModes[0] != "off" ||
+		deepseek.AvailableModes[1] != "follow_harness" ||
 		deepseek.UnavailableReason != "" ||
 		deepseek.Error != "" {
 		t.Fatalf("adapter-less projection = %+v", deepseek)
@@ -168,24 +170,24 @@ func TestClientReasoningProjectionDefaultsFromCapabilityAndAdapter(
 		},
 		{
 			name:       "Kimi toggle",
-			model:      "moonshotai/Kimi-K2.7-Code",
+			model:      "moonshotai/Kimi-K3",
 			wantMode:   "off",
 			wantSource: "compatibility_default",
 			wantModes:  []string{"off", "follow_harness"},
 		},
 		{
-			name:       "Nemotron toggle",
+			name:       "Nemotron not in fallback is passthrough",
 			model:      "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
-			wantMode:   "off",
-			wantSource: "compatibility_default",
-			wantModes:  []string{"off", "follow_harness"},
-		},
-		{
-			name:       "effort only is read-only passthrough",
-			model:      "deepseek-ai/DeepSeek-V4-Pro",
 			wantMode:   "passthrough",
 			wantSource: "internal_passthrough",
 			wantModes:  []string{},
+		},
+		{
+			name:       "DeepSeek toggle defaults to off",
+			model:      "deepseek-ai/DeepSeek-V4-Flash",
+			wantMode:   "off",
+			wantSource: "compatibility_default",
+			wantModes:  []string{"off", "follow_harness"},
 		},
 		{
 			name:       "no controls is read-only passthrough",
@@ -233,10 +235,10 @@ func TestClientReasoningProjectionRejectsSavedUnsupportedOff(t *testing.T) {
 		Name:          "claude-code",
 		ProtocolShape: "anthropic",
 		Route:         "sference",
-		DefaultModel:  "deepseek-ai/DeepSeek-V4-Pro",
+		DefaultModel:  "deepseek-ai/DeepSeek-V4-Flash",
 		ModelOptions: config.ModelOptions{
 			pricing.ProviderSference: {
-				"deepseek-ai/DeepSeek-V4-Pro": {
+				"deepseek-ai/DeepSeek-V4-Flash": {
 					Reasoning: &config.ReasoningPolicy{
 						Mode: config.ReasoningOff,
 					},
@@ -247,13 +249,13 @@ func TestClientReasoningProjectionRejectsSavedUnsupportedOff(t *testing.T) {
 	status := computeClientModelOptions(
 		rc,
 		snapshot,
-	)[pricing.ProviderSference]["deepseek-ai/DeepSeek-V4-Pro"].Reasoning
+	)[pricing.ProviderSference]["deepseek-ai/DeepSeek-V4-Flash"].Reasoning
 	if status == nil ||
 		status.Configured.Mode != "off" ||
 		status.Effective.Mode != "off" ||
-		status.Available ||
-		status.UnavailableReason != reasoningUnavailableAdapter ||
-		status.Error == "" {
+		status.Available != true ||
+		status.UnavailableReason != "" ||
+		status.Error != "" {
 		t.Fatalf("saved unsupported Off projection = %+v", status)
 	}
 }
@@ -264,10 +266,10 @@ func TestClientReasoningProjectionPreservesUnavailableSavedEffort(t *testing.T) 
 		Name:          "claude-code",
 		ProtocolShape: "anthropic",
 		Route:         "sference",
-		DefaultModel:  "deepseek-ai/DeepSeek-V4-Pro",
+		DefaultModel:  "deepseek-ai/DeepSeek-V4-Flash",
 		ModelOptions: config.ModelOptions{
 			"sference": {
-				"deepseek-ai/DeepSeek-V4-Pro": {
+				"deepseek-ai/DeepSeek-V4-Flash": {
 					Reasoning: &config.ReasoningPolicy{
 						Mode:   config.ReasoningFixed,
 						Effort: "xhigh",
@@ -279,7 +281,7 @@ func TestClientReasoningProjectionPreservesUnavailableSavedEffort(t *testing.T) 
 	status := computeClientModelOptions(
 		rc,
 		snapshot,
-	)[pricing.ProviderSference]["deepseek-ai/DeepSeek-V4-Pro"].Reasoning
+	)[pricing.ProviderSference]["deepseek-ai/DeepSeek-V4-Flash"].Reasoning
 	if status == nil ||
 		status.Configured.Mode != "fixed" ||
 		status.Configured.Effort != "xhigh" ||
@@ -492,7 +494,7 @@ func TestReasoningPreflightChecksOnlyRequestedClient(t *testing.T) {
 	body := `{
 		"client":"parked-claude",
 		"provider":"sference",
-		"model":"moonshotai/Kimi-K2.7-Code",
+		"model":"moonshotai/Kimi-K3",
 		"policy":{"mode":"off"}
 	}`
 	request := httptest.NewRequest(

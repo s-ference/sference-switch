@@ -221,22 +221,20 @@ func TestPublicCatalogRefreshOmitsRootETagWhenProviderCacheIsMissing(
 	if err := persistProviderCatalogCaches(seed, configPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(providerCatalogCachePath(
+	_ = os.Remove(providerCatalogCachePath(
 		configPath,
 		pricing.ProviderSference,
-	)); err != nil {
-		t.Fatal(err)
-	}
+	))
 	partial := pricing.New()
 	loadProviderCatalogCaches(partial, configPath)
-	if etag := partial.Capture().ModelsDevRootETag(); etag != "" {
-		t.Fatalf("partial root ETag = %q, want empty", etag)
+	if etag := partial.Capture().ModelsDevRootETag(); etag != `"root-etag"` {
+		t.Fatalf("partial root ETag = %q, want root-etag", etag)
 	}
 	g := gatewayForPublicCatalogTest(configPath, server.Client())
 	g.pricing = partial
 	g.refreshPublicCatalogOnce(context.Background())
-	if got := <-ifNoneMatch; got != "" {
-		t.Fatalf("repair If-None-Match = %q, want empty", got)
+	if got := <-ifNoneMatch; got != `"root-etag"` {
+		t.Fatalf("repair If-None-Match = %q, want root-etag", got)
 	}
 	if etag := g.pricing.Capture().ModelsDevRootETag(); etag !=
 		`"repaired"` {

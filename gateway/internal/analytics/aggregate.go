@@ -56,7 +56,7 @@ func Build(
 			Models:    []CostGroup{},
 			Savings: Savings{
 				BySferenceModel: []SavingsModel{},
-				Mappings:       []SavingsMapping{},
+				Mappings:        []SavingsMapping{},
 			},
 		},
 		Performance: Performance{
@@ -429,7 +429,7 @@ func materializeSavingsModels(
 		metadata := modelMetadata(catalog, "Sference", model, "", model)
 		result = append(result, SavingsModel{
 			ModelID: metadata.ID, DisplayName: metadata.DisplayName,
-			ActualSferenceCostUSD:   value.actual,
+			ActualSferenceCostUSD:  value.actual,
 			EstimatedNativeCostUSD: value.estimated, SavedUSD: saved,
 			SavedPercent: savedPercent(saved, value.estimated),
 		})
@@ -449,7 +449,7 @@ func materializeSavingsMappings(
 		result = append(result, SavingsMapping{
 			SferenceModelID: metadata.ID, SferenceDisplayName: metadata.DisplayName,
 			RequestedClaudeFamily: parts[1],
-			ActualSferenceCostUSD:  value.actual, EstimatedNativeCostUSD: value.estimated,
+			ActualSferenceCostUSD: value.actual, EstimatedNativeCostUSD: value.estimated,
 		})
 	}
 	sort.Slice(result, func(a, b int) bool {

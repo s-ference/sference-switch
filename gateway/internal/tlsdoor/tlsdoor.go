@@ -14,9 +14,9 @@
 package tlsdoor
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/tls"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -365,7 +365,12 @@ func pickerInjectEnabled() bool {
 // bootstrapLog writes diagnostic lines to a user-readable file so the
 // bootstrap injection path can be debugged without sudo (the daemon's
 // stderr is root-owned). One file, appended to, truncated at 1 MB.
-func min(a, b int) int { if a < b { return a }; return b }
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 var bootstrapLog = newBootstrapLogger()
 

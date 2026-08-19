@@ -15,6 +15,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -152,6 +154,10 @@ func TestAuthUnavailableBypassRecordsFallback(t *testing.T) {
 	cfg := testConfig(t, "http://sference.invalid", fallback.URL)
 	cfg.SferenceKey = ""
 	cfg.APIKeyFallback = false
+	// Clear credentials so the gateway is not signed in.
+	emptyAuth := filepath.Join(t.TempDir(), "empty-creds.json")
+	_ = os.WriteFile(emptyAuth, []byte(`{"token":""}`), 0o600)
+	t.Setenv("SFERENCE_SWITCH_AUTH_FILE", emptyAuth)
 	rc := resolvedAnthropicSference(t)
 	rc.FallbackRoute = "anthropic"
 	g, adminL, _ := newGateway(t, cfg, rc)

@@ -21,11 +21,11 @@ type Coverage struct {
 }
 
 type CostSummary struct {
-	ActualClaudeCostUSD              float64 `json:"actual_claude_cost_usd"`
+	ActualClaudeCostUSD               float64 `json:"actual_claude_cost_usd"`
 	ActualSferenceCostUSD             float64 `json:"actual_sference_cost_usd"`
 	EstimatedNativeCostForSferenceUSD float64 `json:"estimated_native_cost_for_sference_usd"`
-	SavedUSD                         float64 `json:"saved_usd"`
-	SavedPercent                     float64 `json:"saved_percent"`
+	SavedUSD                          float64 `json:"saved_usd"`
+	SavedPercent                      float64 `json:"saved_percent"`
 }
 
 type CostGroup struct {
@@ -42,23 +42,23 @@ type CostGroup struct {
 type SavingsModel struct {
 	ModelID                string  `json:"model_id"`
 	DisplayName            string  `json:"display_name"`
-	ActualSferenceCostUSD   float64 `json:"actual_sference_cost_usd"`
+	ActualSferenceCostUSD  float64 `json:"actual_sference_cost_usd"`
 	EstimatedNativeCostUSD float64 `json:"estimated_native_cost_usd"`
 	SavedUSD               float64 `json:"saved_usd"`
 	SavedPercent           float64 `json:"saved_percent"`
 }
 
 type SavingsMapping struct {
-	SferenceModelID         string  `json:"sference_model_id"`
-	SferenceDisplayName     string  `json:"sference_display_name"`
+	SferenceModelID        string  `json:"sference_model_id"`
+	SferenceDisplayName    string  `json:"sference_display_name"`
 	RequestedClaudeFamily  string  `json:"requested_claude_family"`
-	ActualSferenceCostUSD   float64 `json:"actual_sference_cost_usd"`
+	ActualSferenceCostUSD  float64 `json:"actual_sference_cost_usd"`
 	EstimatedNativeCostUSD float64 `json:"estimated_native_cost_usd"`
 }
 
 type Savings struct {
 	BySferenceModel []SavingsModel   `json:"by_sference_model"`
-	Mappings       []SavingsMapping `json:"mappings"`
+	Mappings        []SavingsMapping `json:"mappings"`
 }
 
 type Cost struct {

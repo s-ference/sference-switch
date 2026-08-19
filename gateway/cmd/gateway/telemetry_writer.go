@@ -12,16 +12,20 @@ import (
 // writeTelemetryV1 is deliberately best-effort. Request routing must never
 // fail because the local telemetry store could not open or append an event.
 //
-// Events with no token usage at all (InputTokens and OutputTokens both nil)
-// are dropped before writing. These are failed requests — upstream
-// unreachable, DNS-loop 502, connection refused — that never received a
-// response with usage data. Keeping them pollutes the store with rows that
-// have no cost, no savings, and no performance data; under a retry storm
-// they grow by tens of thousands and crowd out real traffic in the
-// analytics. A request that returned even partial usage (e.g. input tokens
-// but no output) is kept — only a completely empty usage struct is dropped.
+// Events from failed requests (status 0, connection refused, DNS-loop 502)
+// are dropped. These never received a response with usage data; keeping them
+// pollutes the store with rows that have no cost, no savings, and no
+// performance data. Under a retry storm they grow by tens of thousands and
+// crowd out real traffic in the analytics.
+//
+// A successful response that omits usage (e.g. a mock or a non-standard
+// upstream) is still recorded — the guard is on the HTTP status, not the
+// usage struct, so legitimate zero-usage responses are not silently dropped.
 func (g *Gateway) writeTelemetryV1(event telemetry.EventV1) {
-	if event.Usage.InputTokens == nil && event.Usage.OutputTokens == nil {
+	// Drop events from requests that never got a response (status 0:
+	// connection refused, DNS failure, timeout). These have no usage, no
+	// cost, and no performance data.
+	if event.Status != nil && *event.Status == 0 {
 		return
 	}
 	g.telemetryMu.Lock()

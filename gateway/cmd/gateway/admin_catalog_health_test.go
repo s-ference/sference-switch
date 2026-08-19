@@ -33,7 +33,6 @@ func TestModelCatalogHealthJSONReportsEveryProvider(t *testing.T) {
 	for _, provider := range []string{
 		pricing.ProviderAnthropic,
 		pricing.ProviderOpenAI,
-		pricing.ProviderSference,
 	} {
 		raw, ok := result[provider]
 		if !ok {
@@ -74,6 +73,22 @@ func TestModelCatalogHealthJSONReportsEveryProvider(t *testing.T) {
 		}
 	}
 
+	// Sference pricing comes from the embedded fallback, not models.dev.
+	sferenceRaw, sferenceOk := result[pricing.ProviderSference]
+	if !sferenceOk {
+		t.Fatal("model catalog health missing sference")
+	}
+	sferenceHealth, ok := sferenceRaw.(map[string]any)
+	if !ok {
+		t.Fatal("sference health type =", sferenceRaw)
+	}
+	if sferenceHealth["source"] != "sference_embedded_fallback" {
+		t.Errorf("sference source = %v", sferenceHealth["source"])
+	}
+	if sferenceHealth["loaded_from"] != string(pricing.LoadedFromVendoredFallback) {
+		t.Errorf("sference loaded_from = %v", sferenceHealth["loaded_from"])
+	}
+
 	anthropic := result[pricing.ProviderAnthropic].(map[string]any)
 	if anthropic["model_count"] != 3 ||
 		anthropic["priced_model_count"] != 2 {
@@ -88,11 +103,21 @@ func TestModelCatalogHealthReportsSanitizedReasoningDiagnostics(
 ) {
 	fixture := strings.Replace(
 		publicCatalogGatewayFixture,
-		`"reasoning_options": [{"type": "toggle"}]`,
-		`"reasoning_options": [
-			{"type": "future_secret_type", "secret": "must-not-escape"},
-			{"type": "toggle"}
-		]`,
+		`"gpt-test": {
+        "id": "gpt-test",
+        "name": "GPT Test",
+        "cost": {"input": 1, "output": 4}
+      }`,
+		`"gpt-test": {
+        "id": "gpt-test",
+        "name": "GPT Test",
+        "reasoning": true,
+        "reasoning_options": [
+          {"type": "future_secret_type", "secret": "must-not-escape"},
+          {"type": "toggle"}
+        ],
+        "cost": {"input": 1, "output": 4}
+      }`,
 		1,
 	)
 	p := pricing.New()
@@ -107,7 +132,7 @@ func TestModelCatalogHealthReportsSanitizedReasoningDiagnostics(
 		pricing:              p,
 		publicCatalogRefresh: newPublicCatalogRefreshManager(),
 	}
-	health := g.modelCatalogHealthJSON()[pricing.ProviderSference].(map[string]any)
+	health := g.modelCatalogHealthJSON()[pricing.ProviderOpenAI].(map[string]any)
 	diagnostics, ok := health["diagnostics"].([]string)
 	if !ok || len(diagnostics) != 1 ||
 		diagnostics[0] !=

@@ -53,7 +53,7 @@ func buildQuery(hostname string) []byte {
 		query = append(query, []byte(label)...)
 	}
 	query = append(query, 0)          // root label
-	query = append(query, 0x00, 0x01)  // QTYPE: A
+	query = append(query, 0x00, 0x01) // QTYPE: A
 	query = append(query, 0x00, 0x01) // QCLASS: IN
 	return query
 }

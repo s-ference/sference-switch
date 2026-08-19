@@ -45,7 +45,7 @@ import (
 
 const (
 	DefaultPort         = 45273
-	DefaultSferenceURL   = "https://api.sference.com"
+	DefaultSferenceURL  = "https://api.sference.com"
 	DefaultAnthropicURL = "https://api.anthropic.com"
 	DefaultOpenAIURL    = "https://api.openai.com"
 	DefaultAdminAddr    = "127.0.0.1:45273"
@@ -67,10 +67,10 @@ type Config struct {
 	TelemetryEnabled       *bool
 	TelemetryRetentionDays int
 	PidFile                string
-	SferenceURL             string
+	SferenceURL            string
 	AnthropicURL           string
 	OpenAIURL              string
-	SferenceKey             string
+	SferenceKey            string
 	OAuthProfile           string
 	OAuthHost              string
 	APIKeyFallback         bool
@@ -111,10 +111,10 @@ func LoadConfig() Config {
 		TelemetryEnabled:       &telemetryEnabled,
 		TelemetryRetentionDays: config.DefaultTelemetryRetentionDays,
 		PidFile:                pf,
-		SferenceURL:             env("SFERENCE_BASE_URL", DefaultSferenceURL),
+		SferenceURL:            env("SFERENCE_BASE_URL", DefaultSferenceURL),
 		AnthropicURL:           env("ANTHROPIC_API_BASE_URL", DefaultAnthropicURL),
 		OpenAIURL:              env("OPENAI_BASE_URL", DefaultOpenAIURL),
-		SferenceKey:             os.Getenv("SFERENCE_API_KEY"),
+		SferenceKey:            os.Getenv("SFERENCE_API_KEY"),
 		OAuthProfile:           oauthProfile,
 		OAuthHost:              oauthHost,
 		APIKeyFallback:         apiKeyFallback,
@@ -1190,7 +1190,7 @@ func (g *Gateway) forwardModelsGet(cl *clientListener, w http.ResponseWriter, r 
 			upClient = c
 		} else if fallback {
 			upClient = c
-			req.Header.Set("Authorization", "Api-Key "+cfg.SferenceKey)
+			req.Header.Set("Authorization", "Bearer "+cfg.SferenceKey)
 		} else {
 			g.rejectNeedsLogin(w)
 			return

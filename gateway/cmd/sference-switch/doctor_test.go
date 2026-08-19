@@ -388,20 +388,9 @@ func newDoctorFixture(t *testing.T, mut func(*doctorFixtureCfg)) *doctorFixture 
 
 	// Auth store.
 	if cfg.signedIn {
-		expiry := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
-		writeAuthJSON(t, fmt.Sprintf(`{
-  "version": 1,
-  "current": "doc@example.com",
-  "profiles": {
-    "doc@example.com": {
-      "remote_url": "https://app.example.com",
-      "auth_type": "oauth",
-      "oauth_credential": {"access_token": "at", "refresh_token": "rt", "expiry": %q}
-    }
-  }
-}`, expiry))
+		writeAuthJSON(t, `{"token":"sk-doctor-test-key-12345"}`)
 	} else {
-		writeAuthJSON(t, `{"version":1,"profiles":{}}`)
+		writeAuthJSON(t, `{"token":""}`)
 	}
 
 	// Telemetry v1 store. Default: one fresh request event (no subagent).
@@ -2024,7 +2013,7 @@ func TestDoctorProbeConcurrentRowNotAttributed(t *testing.T) {
 // X-Sference-Switch-Door, telemetry cannot be attributed safely to the probe.
 func TestDoctorProbeUnstampedDoorFails(t *testing.T) {
 	fx := newDoctorFixture(t, func(c *doctorFixtureCfg) {
-		c.doorProbe = "none"        // door answers without the header
+		c.doorProbe = "none"         // door answers without the header
 		c.probeTelRoute = "sference" // a healthy-looking row exists anyway
 	})
 	rep := runDoctor(doctorOpts{probe: true, yes: true, timeoutSec: 5})

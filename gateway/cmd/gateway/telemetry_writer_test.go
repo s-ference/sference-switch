@@ -177,8 +177,8 @@ func TestGatewayShutdownClosesAndStopsTelemetryWriter(t *testing.T) {
 			TelemetryEnabled:       &enabled,
 			TelemetryRetentionDays: 90,
 		},
-		adminServer:  &http.Server{},
-		groups:       map[string]*listenerGroup{},
+		adminServer: &http.Server{},
+		groups:      map[string]*listenerGroup{},
 	}
 	g.writeTelemetryV1(gatewayTelemetryEvent(1))
 	if err := g.Shutdown(context.Background()); err != nil {

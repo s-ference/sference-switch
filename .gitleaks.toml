@@ -2,8 +2,13 @@
 useDefault = true
 
 [[allowlists]]
-description = "Synthetic token used only by the isolated fresh-install stub"
+description = "Synthetic tokens used only by isolated test fixtures (no real credentials)"
 regexTarget = "match"
 regexes = [
   '''sference-switch-fresh-install-local-token''',
+  '''sk-test-1234567890abcdef''',
+  '''sk-doctor-test-key-12345''',
+  '''sk-env-test-key-12345''',
+  '''sk-preflight-test-key''',
+  '''sk-preflight-oauth-test''',
 ]

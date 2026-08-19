@@ -25,14 +25,16 @@ import (
 
 func testConfig(t *testing.T, upstreamSference, upstreamAnthropic string) Config {
 	t.Helper()
+	authFile := filepath.Join(t.TempDir(), "credentials.json")
+	_ = os.WriteFile(authFile, []byte(`{"token":"sk-test-key"}`), 0o600)
+	t.Setenv("SFERENCE_SWITCH_AUTH_FILE", authFile)
 	t.Setenv("SFERENCE_SWITCH_AUTH_NO_KEYRING", "1")
-	t.Setenv("SFERENCE_SWITCH_AUTH_FILE", filepath.Join(t.TempDir(), "auth.json"))
 	return Config{
 		TelemetryDir:   filepath.Join(t.TempDir(), "telemetry"),
 		PidFile:        filepath.Join(t.TempDir(), "g.pid"),
-		SferenceURL:     upstreamSference,
+		SferenceURL:    upstreamSference,
 		AnthropicURL:   upstreamAnthropic,
-		SferenceKey:     "bas-key",
+		SferenceKey:    "sk-test-key",
 		OAuthProfile:   "default",
 		OAuthHost:      "https://api.sference.com",
 		APIKeyFallback: true,
@@ -431,8 +433,8 @@ func TestPostMessagesSferenceForwardsRewrittenModel(t *testing.T) {
 		if r.URL.Path != "/v1/messages" {
 			t.Errorf("unexpected upstream path %q", r.URL.Path)
 		}
-		if r.Header.Get("Authorization") != "Api-Key bas-key" {
-			t.Errorf("bad upstream auth: %q", r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "Bearer sk-test-key" {
+			t.Errorf("bad upstream auth (expected Bearer): %q", r.Header.Get("Authorization"))
 		}
 		b, _ := io.ReadAll(r.Body)
 		var m map[string]interface{}
@@ -703,7 +705,11 @@ func TestSferenceRouteRejectsNeedsLoginWhenNoProfileAndNoFallback(t *testing.T) 
 	defer srv.Close()
 	cfg := testConfig(t, srv.URL, srv.URL)
 	cfg.APIKeyFallback = false
-	cfg.SferenceKey = "bas-key"
+	cfg.SferenceKey = ""
+	// Clear credentials to simulate not-signed-in (no API key, no fallback).
+	emptyAuth := filepath.Join(t.TempDir(), "empty-creds.json")
+	_ = os.WriteFile(emptyAuth, []byte(`{"token":""}`), 0o600)
+	t.Setenv("SFERENCE_SWITCH_AUTH_FILE", emptyAuth)
 	g, adminL, _ := newGateway(t, cfg, resolvedAnthropicSference(t))
 	defer adminL.Close()
 	stop := start(t, g)
@@ -739,7 +745,6 @@ func TestSferenceRouteAPIKeyFallbackForwardsAPIKeyHeader(t *testing.T) {
 	defer srv.Close()
 	cfg := testConfig(t, srv.URL, srv.URL)
 	cfg.APIKeyFallback = true
-	cfg.SferenceKey = "fallback-key"
 	g, adminL, _ := newGateway(t, cfg, resolvedAnthropicSference(t))
 	defer adminL.Close()
 	stop := start(t, g)
@@ -757,8 +762,8 @@ func TestSferenceRouteAPIKeyFallbackForwardsAPIKeyHeader(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("got %d want 200", resp.StatusCode)
 	}
-	if gotAuth != "Api-Key fallback-key" {
-		t.Fatalf("upstream Authorization = %q, want Api-Key fallback-key", gotAuth)
+	if gotAuth != "Bearer sk-test-key" {
+		t.Fatalf("upstream Authorization = %q, want Bearer sk-test-key", gotAuth)
 	}
 }
 
@@ -768,6 +773,9 @@ func TestAdminAuthStatusReportsNotSignedIn(t *testing.T) {
 	cfg := testConfig(t, srv.URL, srv.URL)
 	cfg.APIKeyFallback = false
 	cfg.SferenceKey = ""
+	// Override the credentials file with empty token to simulate not-signed-in.
+	_ = os.WriteFile(filepath.Join(filepath.Dir(os.Getenv("SFERENCE_SWITCH_AUTH_FILE")), "empty-creds.json"), []byte(`{"token":""}`), 0o600)
+	t.Setenv("SFERENCE_SWITCH_AUTH_FILE", filepath.Join(filepath.Dir(os.Getenv("SFERENCE_SWITCH_AUTH_FILE")), "empty-creds.json"))
 	g, adminL, _ := newGateway(t, cfg, resolvedAnthropicSference(t))
 	defer adminL.Close()
 	stop := start(t, g)
@@ -789,9 +797,7 @@ func TestAdminAuthStatusReportsNotSignedIn(t *testing.T) {
 	if st["signed_in"] != false {
 		t.Fatalf("signed_in = %v, want false", st["signed_in"])
 	}
-	if st["profile"] != "default" {
-		t.Fatalf("profile = %v, want default", st["profile"])
-	}
+	// The new auth model has no "profile" field; one credential.
 	if st["fallback_enabled"] != false {
 		t.Fatalf("fallback_enabled = %v, want false", st["fallback_enabled"])
 	}

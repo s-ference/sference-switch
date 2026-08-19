@@ -28,8 +28,8 @@ func TestBuildUpstreamHeadersStripsHopByHopAndAuth(t *testing.T) {
 			t.Fatalf("hop-by-hop %q leaked: %q", banned, out.Get(banned))
 		}
 	}
-	if out.Get("Authorization") != "Api-Key bas-secret" {
-		t.Fatalf("sference auth not set: %q", out.Get("Authorization"))
+	if out.Get("Authorization") != "Bearer bas-secret" {
+		t.Fatalf("sference bearer auth not set: %q", out.Get("Authorization"))
 	}
 	if out.Get("Anthropic-Version") != "2023-06-01" {
 		t.Fatalf("forward header dropped: %q", out.Get("Anthropic-Version"))
@@ -151,8 +151,8 @@ func TestBuildUpstreamHeadersAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.Get("Authorization") != "Api-Key mykey" {
-		t.Fatalf("apikey mode should set Authorization to Api-Key mykey: %q", out.Get("Authorization"))
+	if out.Get("Authorization") != "Bearer mykey" {
+		t.Fatalf("apikey mode should set Authorization to Bearer mykey: %q", out.Get("Authorization"))
 	}
 	if out.Get("X-Api-Key") != "" {
 		t.Fatalf("apikey mode should not set X-Api-Key: %q", out.Get("X-Api-Key"))

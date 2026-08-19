@@ -33,9 +33,26 @@ func TestMain(m *testing.M) {
 	launchAgentsDir = func() string { return dir }
 	launchdRunner = &fakeLaunchctl{} // empty: every call errors (nothing loaded)
 	os.Setenv("SFERENCE_SWITCH_MENUBAR", "off")
+	clearAmbientCredentials()
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+// clearAmbientCredentials unsets the credential environment the gateway reads
+// at startup. A developer with SFERENCE_API_KEY exported in their shell would
+// otherwise have the real key injected into upstream requests under test — it
+// then appears verbatim in failure output, and from there in CI logs and any
+// contributor's terminal. Tests that need a key set their own with t.Setenv.
+func clearAmbientCredentials() {
+	for _, key := range []string{
+		"SFERENCE_API_KEY",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"OPENAI_API_KEY",
+	} {
+		os.Unsetenv(key)
+	}
 }
 
 // fakeLaunchctl fakes the launchctl runner: responses are matched by

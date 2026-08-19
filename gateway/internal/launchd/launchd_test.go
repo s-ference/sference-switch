@@ -13,7 +13,7 @@ func TestRenderPlist(t *testing.T) {
 		Label:            RouterLabel,
 		ProgramArguments: []string{"/Users/x/.local/bin/sference-switch", "gateway", "start", "--foreground"},
 		Env: map[string]string{
-			"PATH":                       "/usr/bin:/bin",
+			"PATH":                        "/usr/bin:/bin",
 			"SFERENCE_SWITCH_CONFIG_PATH": "/Users/x/.sference/switch/gateway.yaml",
 		},
 		LogPath: "/Users/x/.sference/switch/logs/router.log",

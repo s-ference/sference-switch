@@ -283,7 +283,13 @@ final class SferenceSwitchState: ObservableObject {
     func menuDidShow() {
         menuVisible = true
         requestInteractiveRefresh(includeStats: true)
-        Task { await refreshProxyState() }
+        // Only refresh proxy state on the stable channel where a real
+        // binary exists. Preview/test fixtures don't have intercept
+        // installed and the CLI call would pollute the runner's recorded
+        // arguments.
+        if variant.channel == .stable {
+            Task { await refreshProxyState() }
+        }
     }
 
     func menuDidHide() {

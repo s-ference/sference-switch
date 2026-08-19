@@ -833,7 +833,7 @@ func cmdGatewayStatus(args []string) int {
 	out := map[string]interface{}{
 		"running":                running,
 		"host":                   fmt.Sprintf("127.0.0.1:%d", portI),
-		"upstream_for_sference":   envDefault("SFERENCE_BASE_URL", gateway.DefaultSferenceURL),
+		"upstream_for_sference":  envDefault("SFERENCE_BASE_URL", gateway.DefaultSferenceURL),
 		"upstream_for_anthropic": envDefault("ANTHROPIC_API_BASE_URL", gateway.DefaultAnthropicURL),
 	}
 	if running {
