@@ -32,9 +32,9 @@ func testConfig(t *testing.T, upstreamSference, upstreamAnthropic string) Config
 	return Config{
 		TelemetryDir:   filepath.Join(t.TempDir(), "telemetry"),
 		PidFile:        filepath.Join(t.TempDir(), "g.pid"),
-		SferenceURL:     upstreamSference,
+		SferenceURL:    upstreamSference,
 		AnthropicURL:   upstreamAnthropic,
-		SferenceKey:     "sk-test-key",
+		SferenceKey:    "sk-test-key",
 		OAuthProfile:   "default",
 		OAuthHost:      "https://api.sference.com",
 		APIKeyFallback: true,
@@ -745,7 +745,7 @@ func TestSferenceRouteAPIKeyFallbackForwardsAPIKeyHeader(t *testing.T) {
 	defer srv.Close()
 	cfg := testConfig(t, srv.URL, srv.URL)
 	cfg.APIKeyFallback = true
-		g, adminL, _ := newGateway(t, cfg, resolvedAnthropicSference(t))
+	g, adminL, _ := newGateway(t, cfg, resolvedAnthropicSference(t))
 	defer adminL.Close()
 	stop := start(t, g)
 	defer stop()

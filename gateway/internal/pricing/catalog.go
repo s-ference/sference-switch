@@ -13,7 +13,7 @@ import (
 const (
 	ProviderAnthropic = "anthropic"
 	ProviderOpenAI    = "openai"
-	ProviderSference   = "sference"
+	ProviderSference  = "sference"
 )
 
 // ExecutionProfile names provider request behavior that can change pricing
@@ -162,7 +162,7 @@ type providerCatalog struct {
 	models                      map[string]ModelRecord
 	replacesAccountAvailability bool
 	replacesPricing             bool
-	sferencePricing              *sferencePricingCatalog
+	sferencePricing             *sferencePricingCatalog
 }
 
 type sferencePricingCatalog struct {

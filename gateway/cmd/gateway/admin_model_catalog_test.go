@@ -50,7 +50,7 @@ func testModelCatalogGateway(t *testing.T, handler http.Handler, signedIn bool) 
 	g := &Gateway{
 		cfg: Config{
 			OAuthHost:      "https://catalog.test",
-			SferenceKey:     "api-key-that-must-not-be-used",
+			SferenceKey:    "api-key-that-must-not-be-used",
 			APIKeyFallback: true,
 		},
 		client:  fallback,
@@ -597,7 +597,7 @@ func TestAdminModelCatalogRejectsSchemaDrift(t *testing.T) {
 			// Missing/invalid pagination is accepted (Sference has no pagination).
 			// Only truly malformed responses produce errors.
 			if tt.name == "malformed JSON" || tt.name == "multiple JSON values" ||
-				tt.name == "top-level array" || tt.name == "wrong items type" || tt.name == "wrong model type"  {
+				tt.name == "top-level array" || tt.name == "wrong items type" || tt.name == "wrong model type" {
 				if response.State != "error" {
 					t.Fatalf("response = %+v, want error", response)
 				}
@@ -649,7 +649,7 @@ func TestAdminModelCatalogSanitizesTransportError(t *testing.T) {
 	g := &Gateway{
 		cfg: Config{
 			OAuthHost:      "https://catalog.test",
-			SferenceKey:     "api-key-that-must-not-be-used",
+			SferenceKey:    "api-key-that-must-not-be-used",
 			APIKeyFallback: true,
 		},
 		client: &http.Client{Transport: modelCatalogRoundTripFunc(func(r *http.Request) (*http.Response, error) {

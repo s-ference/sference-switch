@@ -32,8 +32,8 @@ func TestHydrateFromSferenceMock(t *testing.T) {
 			{
 				"id": "zai-org/GLM-5.2",
 				"pricing": map[string]interface{}{
-					"input_per_million_usd":  1.2,
-					"output_per_million_usd": 4.2,
+					"input_per_million_usd":        1.2,
+					"output_per_million_usd":       4.2,
 					"cached_input_per_million_usd": 0.26,
 				},
 			},

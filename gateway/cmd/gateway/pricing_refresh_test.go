@@ -28,8 +28,8 @@ const liveCatalogFixture = `{
 func catalogTestGateway(server *httptest.Server) *Gateway {
 	return &Gateway{
 		cfg: Config{
-			SferenceURL:     server.URL,
-			SferenceKey:     "catalog-key",
+			SferenceURL:    server.URL,
+			SferenceKey:    "catalog-key",
 			APIKeyFallback: true,
 		},
 		pricing:        pricing.New(),

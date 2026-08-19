@@ -25,7 +25,7 @@ const (
 	modelCatalogMaxBody                       = 8 << 20
 	modelCatalogSignedOutReasonNotSignedIn    = "not_signed_in"
 	modelCatalogSignedOutReasonSessionExpired = "session_expired"
-	sferenceModelAPIsAvailabilitySource        = "sference_model_apis"
+	sferenceModelAPIsAvailabilitySource       = "sference_model_apis"
 )
 
 var errModelCatalogUnauthorized = errors.New("model catalog authorization rejected")
@@ -40,13 +40,13 @@ type modelCatalogResponse struct {
 }
 
 type modelCatalogModel struct {
-	Slug          string                  `json:"slug"`
-	DisplayName  string                  `json:"display_name"`
-	StorageTarget string                  `json:"storage_target"`
-	Alias         string                  `json:"alias,omitempty"`
-	Label         string                  `json:"label,omitempty"`
-	Available     bool                    `json:"available"`
-	Reasoning     *modelCatalogReasoning  `json:"reasoning,omitempty"`
+	Slug          string                 `json:"slug"`
+	DisplayName   string                 `json:"display_name"`
+	StorageTarget string                 `json:"storage_target"`
+	Alias         string                 `json:"alias,omitempty"`
+	Label         string                 `json:"label,omitempty"`
+	Available     bool                   `json:"available"`
+	Reasoning     *modelCatalogReasoning `json:"reasoning,omitempty"`
 }
 
 type modelCatalogReasoning struct {
@@ -189,7 +189,7 @@ func (g *Gateway) modelCatalogModelsFromSnapshot(
 		}
 		resolved[i] = modelCatalogModel{
 			Slug:          model.Slug,
-			DisplayName:  displayName,
+			DisplayName:   displayName,
 			StorageTarget: model.Slug,
 			Alias:         alias,
 			Label:         label,

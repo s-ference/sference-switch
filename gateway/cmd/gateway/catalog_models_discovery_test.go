@@ -46,7 +46,7 @@ func TestCatalogBackedClaudeModelsDiscoveryProjectsOnlyPricedModels(t *testing.T
 			g := &Gateway{
 				cfg: Config{
 					AnthropicURL: native.URL,
-					SferenceURL:   native.URL,
+					SferenceURL:  native.URL,
 				},
 				pricing: modelPricing,
 				client:  native.Client(),

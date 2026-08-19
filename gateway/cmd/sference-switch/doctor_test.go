@@ -2013,7 +2013,7 @@ func TestDoctorProbeConcurrentRowNotAttributed(t *testing.T) {
 // X-Sference-Switch-Door, telemetry cannot be attributed safely to the probe.
 func TestDoctorProbeUnstampedDoorFails(t *testing.T) {
 	fx := newDoctorFixture(t, func(c *doctorFixtureCfg) {
-		c.doorProbe = "none"        // door answers without the header
+		c.doorProbe = "none"         // door answers without the header
 		c.probeTelRoute = "sference" // a healthy-looking row exists anyway
 	})
 	rep := runDoctor(doctorOpts{probe: true, yes: true, timeoutSec: 5})

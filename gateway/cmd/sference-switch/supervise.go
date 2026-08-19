@@ -164,7 +164,7 @@ func jobEnv(lc *lifecycleConfig) map[string]string {
 	}
 	return map[string]string{
 		"SFERENCE_SWITCH_CONFIG_PATH": path,
-		"PATH":                       os.Getenv("PATH"),
+		"PATH":                        os.Getenv("PATH"),
 	}
 }
 

@@ -18,7 +18,7 @@ const (
 const (
 	SferenceMultimodalUnsupportedClassifierID = "sference.multimodal_input_unsupported.v1"
 	SferenceMultimodalUnsupportedMessage      = "This model does not support multimodal (image/video/audio) inputs."
-	MaxClassifierBodyBytes                   = 64 << 10
+	MaxClassifierBodyBytes                    = 64 << 10
 )
 
 // IsSferenceMultimodalUnsupported400 reports whether an identity-encoded,

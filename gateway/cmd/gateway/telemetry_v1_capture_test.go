@@ -102,14 +102,14 @@ func replaceTelemetrySferencePricing(
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"schema_version": 2,
-		"source": "https://api.sference.com/v1/models",
-		"fetched_at": capturedAt.Format(time.RFC3339),
-		"source_sha256": "test-sha",
+		"source":         "https://api.sference.com/v1/models",
+		"fetched_at":     capturedAt.Format(time.RFC3339),
+		"source_sha256":  "test-sha",
 		"data": []map[string]any{{
 			"id": "zai-org/GLM-5.2",
 			"pricing": map[string]any{
-				"input_per_million_usd":  input,
-				"output_per_million_usd": 2.5,
+				"input_per_million_usd":        input,
+				"output_per_million_usd":       2.5,
 				"cached_input_per_million_usd": 0.1,
 			},
 		}},
