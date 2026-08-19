@@ -930,6 +930,7 @@ final class ReasoningConfigurationTests: XCTestCase {
                 "active_config_hash": "sha256:active",
                 "desired_config_hash": "sha256:active",
                 "health": "ready",
+                "capabilities": ["global_routing"],
                 "clients": [[
                     "name": client.name,
                     "enabled": client.enabled,
@@ -1013,6 +1014,7 @@ final class ReasoningConfigurationTests: XCTestCase {
             "desired_config_hash": "sha256:active",
             "health": "ready",
             "global_routing_enabled": true,
+            "capabilities": ["global_routing"],
             "clients": [[
                 "name": "claude-code",
                 "enabled": true,
