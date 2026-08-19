@@ -707,7 +707,7 @@ final class ReasoningConfigurationTests: XCTestCase {
     }
 
     @MainActor
-    func testDefaultResetSkipsPreflightAndUsesTypedCLIPath() async {
+    func testDefaultResetSkipsPreflightAndUsesTypedCLIPath() async throws {
         throw XCTSkip("requires Xcode to debug fixture state; canMutateReasoning returns false despite capabilities")
         let preflight = FixedReasoningPreflightReader(
             snapshot: preflightSnapshot())
