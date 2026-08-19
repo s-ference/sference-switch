@@ -103,11 +103,21 @@ func TestModelCatalogHealthReportsSanitizedReasoningDiagnostics(
 ) {
 	fixture := strings.Replace(
 		publicCatalogGatewayFixture,
-		`"reasoning_options": [{"type": "toggle"}]`,
-		`"reasoning_options": [
-			{"type": "future_secret_type", "secret": "must-not-escape"},
-			{"type": "toggle"}
-		]`,
+		`"gpt-test": {
+        "id": "gpt-test",
+        "name": "GPT Test",
+        "cost": {"input": 1, "output": 4}
+      }`,
+		`"gpt-test": {
+        "id": "gpt-test",
+        "name": "GPT Test",
+        "reasoning": true,
+        "reasoning_options": [
+          {"type": "future_secret_type", "secret": "must-not-escape"},
+          {"type": "toggle"}
+        ],
+        "cost": {"input": 1, "output": 4}
+      }`,
 		1,
 	)
 	p := pricing.New()
@@ -122,7 +132,7 @@ func TestModelCatalogHealthReportsSanitizedReasoningDiagnostics(
 		pricing:              p,
 		publicCatalogRefresh: newPublicCatalogRefreshManager(),
 	}
-	health := g.modelCatalogHealthJSON()[pricing.ProviderSference].(map[string]any)
+	health := g.modelCatalogHealthJSON()[pricing.ProviderOpenAI].(map[string]any)
 	diagnostics, ok := health["diagnostics"].([]string)
 	if !ok || len(diagnostics) != 1 ||
 		diagnostics[0] !=
