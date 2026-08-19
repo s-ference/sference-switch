@@ -34,7 +34,7 @@ func subagentClient(t *testing.T, rt, model, routing string) resolvedClientConfi
 	rc.GlobalRoutingEnabled = rt == "sference"
 	rc.ModelAliases = map[string]string{
 		"claude-sference-glm-5-2": "zai-org/GLM-5.2",
-		"anthropic-sference-kimi": "moonshotai/Kimi-K2.7-Code",
+		"anthropic-sference-kimi": "moonshotai/Kimi-K3",
 	}
 	rc.SubagentModel = model
 	rc.SubagentRouting = routing
@@ -153,16 +153,16 @@ func TestSubagentMatrix(t *testing.T) {
 			wantSub: true, wantSubM: "claude-sference-glm-5-2", wantReq: "claude-opus-4-8",
 		},
 		{
-			name: "on/slug/sference", header: "agent-1", model: "moonshotai/Kimi-K2.7-Code", routing: "on",
+			name: "on/slug/sference", header: "agent-1", model: "moonshotai/Kimi-K3", routing: "on",
 			route: "sference", reqModel: "claude-opus-4-8",
-			wantUp: "moonshotai/Kimi-K2.7-Code", wantRoute: "sference", wantEff: "",
-			wantSub: true, wantSubM: "moonshotai/Kimi-K2.7-Code", wantReq: "claude-opus-4-8",
+			wantUp: "moonshotai/Kimi-K3", wantRoute: "sference", wantEff: "",
+			wantSub: true, wantSubM: "moonshotai/Kimi-K3", wantReq: "claude-opus-4-8",
 		},
 		{
-			name: "on/slug/anthropic", header: "agent-1", model: "moonshotai/Kimi-K2.7-Code", routing: "on",
+			name: "on/slug/anthropic", header: "agent-1", model: "moonshotai/Kimi-K3", routing: "on",
 			route: "anthropic", reqModel: "claude-opus-4-8",
-			wantUp: "moonshotai/Kimi-K2.7-Code", wantRoute: "anthropic", wantEff: "sference",
-			wantSub: true, wantSubM: "moonshotai/Kimi-K2.7-Code", wantReq: "claude-opus-4-8",
+			wantUp: "moonshotai/Kimi-K3", wantRoute: "anthropic", wantEff: "sference",
+			wantSub: true, wantSubM: "moonshotai/Kimi-K3", wantReq: "claude-opus-4-8",
 		},
 		{
 			name: "on/native/sference", header: "agent-1", model: "claude-sonnet-4-6", routing: "on",
@@ -497,7 +497,7 @@ func TestSubagentSIGHUPReloadFlipsRouting(t *testing.T) {
 		}
 		select {
 		case m := <-gotModel:
-			if m == "moonshotai/Kimi-K2.7-Code" {
+			if m == "moonshotai/Kimi-K3" {
 				ok = true
 			}
 		case <-time.After(500 * time.Millisecond):
@@ -547,7 +547,7 @@ func TestSubagentHashCoversSubagentFields(t *testing.T) {
 		t.Fatal("hash must change when subagent_routing is set")
 	}
 	c := b
-	c.SubagentModel = "moonshotai/Kimi-K2.7-Code"
+	c.SubagentModel = "moonshotai/Kimi-K3"
 	if b.hash() == c.hash() {
 		t.Fatal("hash must change when subagent_model value changes")
 	}
@@ -646,7 +646,7 @@ func TestSubagentConfigValidation(t *testing.T) {
 			c.SubagentModel = "claude-sference-glm-5-2"
 		}, ""},
 		{"valid slug", func(c *config.Client) {
-			c.SubagentModel = "moonshotai/Kimi-K2.7-Code"
+			c.SubagentModel = "moonshotai/Kimi-K3"
 		}, ""},
 		{"valid native", func(c *config.Client) {
 			c.SubagentModel = "claude-sonnet-4-6"
@@ -727,10 +727,10 @@ func TestSubagentUnparseableBodySkipsRewrite(t *testing.T) {
 	// Keep this test focused on the subagent gate's malformed-body
 	// passthrough contract by selecting Follow Harness for the default
 	// toggle model. Default Off cannot rewrite malformed JSON.
-	rc.DefaultModel = "moonshotai/Kimi-K2.7-Code"
+	rc.DefaultModel = "moonshotai/Kimi-K3"
 	rc.ModelOptions = config.ModelOptions{
 		"sference": {
-			"moonshotai/Kimi-K2.7-Code": {
+			"moonshotai/Kimi-K3": {
 				Reasoning: &config.ReasoningPolicy{
 					Mode: config.ReasoningFollowHarness,
 				},
@@ -768,7 +768,7 @@ func TestSubagentUnparseableBodySkipsRewrite(t *testing.T) {
 // telemetry is the original harness model even after the rewrite,
 // across target classes. This is the spec's telemetry invariant.
 func TestSubagentRequestedModelPreserved(t *testing.T) {
-	for _, target := range []string{"claude-sference-glm-5-2", "moonshotai/Kimi-K2.7-Code", "claude-sonnet-4-6"} {
+	for _, target := range []string{"claude-sference-glm-5-2", "moonshotai/Kimi-K3", "claude-sonnet-4-6"} {
 		t.Run(target, func(t *testing.T) {
 			gotModel := make(chan string, 1)
 			basSrv := sferenceStub(t, gotModel)
@@ -811,7 +811,7 @@ func TestSubagentNativeTargetFamilyRoute(t *testing.T) {
 	defer basSrv.Close()
 	cfg := testConfig(t, basSrv.URL, basSrv.URL)
 	rc := subagentClient(t, "sference", "claude-sonnet-4-6", "on")
-	rc.ModelRoutes = map[string]string{"sonnet": "moonshotai/Kimi-K2.7-Code"}
+	rc.ModelRoutes = map[string]string{"sonnet": "moonshotai/Kimi-K3"}
 	g, adminL, _ := newGateway(t, cfg, rc)
 	defer adminL.Close()
 	stop := start(t, g)
@@ -823,8 +823,8 @@ func TestSubagentNativeTargetFamilyRoute(t *testing.T) {
 	}
 	select {
 	case m := <-gotModel:
-		if m != "moonshotai/Kimi-K2.7-Code" {
-			t.Fatalf("upstream got %q, want moonshotai/Kimi-K2.7-Code (Sonnet family route)", m)
+		if m != "moonshotai/Kimi-K3" {
+			t.Fatalf("upstream got %q, want moonshotai/Kimi-K3 (Sonnet family route)", m)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("upstream never received the request")
