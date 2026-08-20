@@ -63,13 +63,12 @@ func cmdAuthLogin(args []string) int {
 			return 2
 		}
 	}
-	if apiKey == "" {
-		// Fall back to an existing env var so scripts can pre-set it.
-		apiKey = os.Getenv("SFERENCE_API_KEY")
-	}
 	if apiKey != "" {
 		return loginWithAPIKey(apiKey)
 	}
+	// No --api-key: always the device flow. SFERENCE_API_KEY is NOT
+	// consulted here — an exported key silently hijacking the interactive
+	// login is a worse surprise than scripts passing --api-key explicitly.
 	return loginWithDeviceFlow()
 }
 
