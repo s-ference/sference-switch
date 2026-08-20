@@ -768,8 +768,11 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
     }
 
     func startDeviceLogin() async throws -> DeviceLoginSnapshot {
+        // The gateway proxies the device-code request to the platform
+        // synchronously, so this call needs a wider budget than the
+        // local-only admin reads (2s session default).
         let object = try await postJSON(
-            "v1/admin/auth/device/start", body: [:])
+            "v1/admin/auth/device/start", body: [:], timeout: 10)
         guard let dict = object as? [String: Any] else {
             throw GatewayClientError.invalidPayload
         }
@@ -815,12 +818,16 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
 
     private func postJSON(
         _ path: String,
-        body: [String: Any]
+        body: [String: Any],
+        timeout: TimeInterval? = nil
     ) async throws -> Any {
         var request = URLRequest(
             url: adminBaseURL(runtime: runtime)
                 .appendingPathComponent(path))
         request.httpMethod = "POST"
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
         request.setValue(
             "application/json",
             forHTTPHeaderField: "Content-Type")
