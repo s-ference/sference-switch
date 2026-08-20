@@ -152,6 +152,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(login)
         }
 
+        if variant.channel == .stable, state.auth?.signedIn == true {
+            let signOut = actionItem(
+                "Sign Out of Sference…",
+                action: #selector(signOut))
+            signOut.image = symbol("person.crop.circle.badge.minus")
+            menu.addItem(signOut)
+        }
+
         menu.addItem(.separator())
         menu.addItem(actionItem(
             "Quit \(variant.displayName)",
@@ -247,11 +255,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
 
         if let login = state.deviceLogin {
-            let item = disabledItem(deviceLoginMenuTitle(login))
-            item.image = symbol("person.badge.key")
-            menu.addItem(item)
-            added = true
             if login.state == "pending" && !login.userCode.isEmpty {
+                // Clicking the code re-opens the verification page —
+                // covers adopted flows and closed tabs.
+                let item = actionItem(
+                    deviceLoginMenuTitle(login),
+                    action: #selector(openDeviceLoginPage))
+                item.image = symbol("person.badge.key")
+                menu.addItem(item)
                 let copy = actionItem(
                     "Copy Code",
                     action: #selector(copyDeviceLoginCode))
@@ -262,7 +273,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                     action: #selector(cancelDeviceLogin))
                 cancel.image = symbol("xmark.circle")
                 menu.addItem(cancel)
+            } else {
+                let item = disabledItem(deviceLoginMenuTitle(login))
+                item.image = symbol("person.badge.key")
+                menu.addItem(item)
             }
+            added = true
         }
 
         for client in state.clients where client.enabled && client.fallbackActive {
@@ -404,8 +420,24 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         NSPasteboard.general.setString(code, forType: .string)
     }
 
+    @objc private func openDeviceLoginPage() {
+        state.openDeviceLoginVerificationPage()
+    }
+
     @objc private func cancelDeviceLogin() {
         Task { await state.cancelDeviceLogin() }
+    }
+
+    @objc private func signOut() {
+        guard !isPreview, variant.channel == .stable else { return }
+        let alert = NSAlert()
+        alert.messageText = "Sign Out of Sference?"
+        alert.informativeText = "The OAuth grant on this Mac will be revoked and removed. Sference routing stops until you sign in again."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Sign Out")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { await state.signOut() }
     }
 
     @objc private func startSystem() {

@@ -62,6 +62,24 @@ private struct FastClock: RuntimeClock {
     }
 }
 
+private actor FakeAuthSessionReader: AuthSessionReading {
+    private(set) var logoutCalls = 0
+    private var result: Result<AuthLogoutResult, Error>
+
+    init(result: AuthLogoutResult = AuthLogoutResult(dict: ["ok": true])) {
+        self.result = .success(result)
+    }
+
+    func fail(with error: Error) {
+        result = .failure(error)
+    }
+
+    func logout() async throws -> AuthLogoutResult {
+        logoutCalls += 1
+        return try result.get()
+    }
+}
+
 @MainActor
 private final class FakeLoginItemService: LoginItemServicing {
     var status: SMAppService.Status = .notRegistered
@@ -107,6 +125,7 @@ final class DeviceLoginTests: XCTestCase {
     private func makeState(
         variant: AppVariant? = nil,
         deviceReader: FakeDeviceLoginReader,
+        authSessionReader: FakeAuthSessionReader = FakeAuthSessionReader(),
         adminReader: StubAdminReader = StubAdminReader(),
         recorder: URLRecorder? = nil
     ) -> SferenceSwitchState {
@@ -117,6 +136,7 @@ final class DeviceLoginTests: XCTestCase {
             variant: variant ?? stableVariant(),
             reader: adminReader,
             deviceLoginReader: deviceReader,
+            authSessionReader: authSessionReader,
             clock: FastClock(),
             loginItemService: FakeLoginItemService(),
             previewRuntimeValidator: { _ in nil },
@@ -301,6 +321,153 @@ final class DeviceLoginTests: XCTestCase {
         XCTAssertEqual(
             state.lastError,
             "Authentication changes are disabled in Sference Switch Preview.")
+    }
+
+    func testAdoptDeviceLoginPicksUpExternallyStartedFlow() async {
+        // A flow started outside the app (CLI, earlier run) is pending
+        // on the gateway; opening the menu adopts it WITHOUT opening
+        // another browser tab.
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: ["state": "idle"]),
+            statuses: [
+                DeviceLoginSnapshot(dict: [
+                    "state": "pending",
+                    "user_code": "ADOP-TED1",
+                    "verification_uri": "https://app.sference.com/device",
+                ]),
+            ])
+        let recorder = URLRecorder()
+        let state = makeState(deviceReader: deviceReader, recorder: recorder)
+        defer { state.stop() }
+
+        await state.adoptDeviceLoginIfPending()
+
+        XCTAssertTrue(state.reauthenticating)
+        XCTAssertEqual(state.deviceLogin?.userCode, "ADOP-TED1")
+        XCTAssertTrue(recorder.urls.isEmpty)  // adoption opens no browser
+    }
+
+    func testAdoptDeviceLoginIgnoresIdleGateway() async {
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: ["state": "idle"]),
+            statuses: [DeviceLoginSnapshot(dict: ["state": "idle"])])
+        let state = makeState(deviceReader: deviceReader)
+        defer { state.stop() }
+
+        await state.adoptDeviceLoginIfPending()
+
+        XCTAssertFalse(state.reauthenticating)
+        XCTAssertNil(state.deviceLogin)
+    }
+
+    func testOpenDeviceLoginVerificationPageUsesSnapshotURI() async {
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: [
+                "state": "pending",
+                "user_code": "WXYZ-1234",
+                "verification_uri": "https://app.sference.com/device",
+            ]))
+        let recorder = URLRecorder()
+        let state = makeState(deviceReader: deviceReader, recorder: recorder)
+        defer { state.stop() }
+
+        await state.beginDeviceLogin()
+        XCTAssertEqual(recorder.urls.count, 1)  // opened by begin
+
+        state.openDeviceLoginVerificationPage()
+        XCTAssertEqual(
+            recorder.urls,
+            [URL(string: "https://app.sference.com/device")!,
+             URL(string: "https://app.sference.com/device")!])
+    }
+
+    // MARK: - Sign out
+
+    func testSignOutSuccessClearsErrorAndRefreshes() async {
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: ["state": "idle"]))
+        let sessionReader = FakeAuthSessionReader(
+            result: AuthLogoutResult(dict: ["ok": true]))
+        let adminReader = StubAdminReader()
+        let state = makeState(
+            deviceReader: deviceReader,
+            authSessionReader: sessionReader,
+            adminReader: adminReader)
+        defer { state.stop() }
+
+        await state.signOut()
+
+        let logoutCalls = await sessionReader.logoutCalls
+        XCTAssertEqual(logoutCalls, 1)
+        XCTAssertNil(state.lastError)
+        let statusCalls = await adminReader.statusCalls
+        XCTAssertGreaterThanOrEqual(statusCalls, 1)
+    }
+
+    func testSignOutRefusalSurfacesReason() async {
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: ["state": "idle"]))
+        let sessionReader = FakeAuthSessionReader(
+            result: AuthLogoutResult(dict: [
+                "ok": false,
+                "error": "credential belongs to the sference CLI — run 'sference auth logout'",
+            ]))
+        let state = makeState(
+            deviceReader: deviceReader,
+            authSessionReader: sessionReader)
+        defer { state.stop() }
+
+        await state.signOut()
+
+        XCTAssertEqual(
+            state.lastError,
+            "credential belongs to the sference CLI — run 'sference auth logout'")
+    }
+
+    func testSignOutTransportFailure() async {
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: ["state": "idle"]))
+        let sessionReader = FakeAuthSessionReader()
+        await sessionReader.fail(with: GatewayClientError.badResponse(503))
+        let state = makeState(
+            deviceReader: deviceReader,
+            authSessionReader: sessionReader)
+        defer { state.stop() }
+
+        await state.signOut()
+
+        XCTAssertEqual(
+            state.lastError, "Sign-out failed. Is the router running?")
+    }
+
+    func testPreviewVariantBlocksSignOut() async {
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: ["state": "idle"]))
+        let sessionReader = FakeAuthSessionReader()
+        let state = makeState(
+            variant: previewVariant(),
+            deviceReader: deviceReader,
+            authSessionReader: sessionReader)
+        defer { state.stop() }
+
+        await state.signOut()
+
+        let logoutCalls = await sessionReader.logoutCalls
+        XCTAssertEqual(logoutCalls, 0)
+        XCTAssertEqual(
+            state.lastError,
+            "Authentication changes are disabled in Sference Switch Preview.")
+    }
+
+    func testAuthLogoutResultParses() {
+        let ok = AuthLogoutResult(dict: ["ok": true, "state": "signed_out"])
+        XCTAssertTrue(ok.ok)
+        XCTAssertEqual(ok.error, "")
+        let refused = AuthLogoutResult(dict: [
+            "ok": false, "error": "reason",
+        ])
+        XCTAssertFalse(refused.ok)
+        XCTAssertEqual(refused.error, "reason")
     }
 
     // MARK: - Display helpers

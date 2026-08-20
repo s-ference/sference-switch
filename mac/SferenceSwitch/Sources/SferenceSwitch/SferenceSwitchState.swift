@@ -101,6 +101,7 @@ final class SferenceSwitchState: ObservableObject {
     private let modelCatalogReader: any ModelCatalogReading
     private let reasoningPreflightReader: any ReasoningPreflightReading
     private let deviceLoginReader: any DeviceLoginReading
+    private let authSessionReader: any AuthSessionReading
     private let cliRunner: any CLIRunning
     private let clock: any RuntimeClock
     private let loginItemService: any LoginItemServicing
@@ -145,6 +146,7 @@ final class SferenceSwitchState: ObservableObject {
          modelCatalogReader: (any ModelCatalogReading)? = nil,
          reasoningPreflightReader: (any ReasoningPreflightReading)? = nil,
          deviceLoginReader: (any DeviceLoginReading)? = nil,
+         authSessionReader: (any AuthSessionReading)? = nil,
          cliRunner: any CLIRunning = SystemCLIRunner(),
          clock: any RuntimeClock = SystemRuntimeClock(),
          loginItemService: (any LoginItemServicing)? = nil,
@@ -161,6 +163,7 @@ final class SferenceSwitchState: ObservableObject {
         self.modelCatalogReader = modelCatalogReader ?? apiClient
         self.reasoningPreflightReader = reasoningPreflightReader ?? apiClient
         self.deviceLoginReader = deviceLoginReader ?? apiClient
+        self.authSessionReader = authSessionReader ?? apiClient
         self.cliRunner = cliRunner
         self.clock = clock
         self.loginItemService = loginItemService ?? SystemLoginItemService()
@@ -218,6 +221,7 @@ final class SferenceSwitchState: ObservableObject {
         modelCatalogReader = reader
         reasoningPreflightReader = reader
         deviceLoginReader = reader
+        authSessionReader = reader
         cliRunner = SystemCLIRunner()
         clock = SystemRuntimeClock()
         loginItemService = SystemLoginItemService()
@@ -315,6 +319,8 @@ final class SferenceSwitchState: ObservableObject {
         // arguments.
         if variant.channel == .stable {
             Task { await refreshProxyState() }
+            // Surface a pending sign-in no matter who started it.
+            Task { await adoptDeviceLoginIfPending() }
         }
     }
 
@@ -1236,6 +1242,52 @@ final class SferenceSwitchState: ObservableObject {
         _ = try? await deviceLoginReader.cancelDeviceLogin()
         deviceLogin = nil
         reauthenticating = false
+    }
+
+    /// Re-open the verification page for a pending flow (the user closed
+    /// the tab, or the flow was adopted from elsewhere so no browser
+    /// opened here).
+    func openDeviceLoginVerificationPage() {
+        guard let uri = deviceLogin?.verificationURI,
+              !uri.isEmpty,
+              let url = URL(string: uri) else { return }
+        browserOpener(url)
+    }
+
+    /// Picks up a pending flow the app did not start (CLI, an earlier
+    /// app run, another window) so the menu reflects it. Called on menu
+    /// open; never opens the browser — the flow's originator owns that.
+    func adoptDeviceLoginIfPending() async {
+        guard variant.channel == .stable,
+              !reauthenticating,
+              deviceLogin == nil else { return }
+        guard let snapshot = try? await deviceLoginReader
+            .fetchDeviceLoginStatus(),
+              snapshot.state == "pending" else { return }
+        deviceLogin = snapshot
+        reauthenticating = true
+        startDeviceLoginPolling()
+    }
+
+    /// In-UI sign-out: the gateway revokes the grant server-side,
+    /// removes its own auth file, and live-reloads. Refusals (env-var
+    /// or shared-CLI credential) come back as ok:false with the reason.
+    func signOut() async {
+        guard variant.channel == .stable else {
+            lastError = "Authentication changes are disabled in Sference Switch Preview."
+            return
+        }
+        do {
+            let result = try await authSessionReader.logout()
+            lastError = result.ok
+                ? nil
+                : (result.error.isEmpty
+                    ? "Sign-out failed."
+                    : menuErrorLabel(result.error))
+        } catch {
+            lastError = "Sign-out failed. Is the router running?"
+        }
+        await refresh()
     }
 
     private func startDeviceLoginPolling() {

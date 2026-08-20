@@ -675,6 +675,23 @@ protocol DeviceLoginReading: Sendable {
     func cancelDeviceLogin() async throws -> DeviceLoginSnapshot
 }
 
+/// Result of POST /v1/admin/auth/logout. A refusal (env-var or
+/// shared-file credential) is 200 with ok:false and the reason in
+/// error — rendered as-is, not thrown.
+struct AuthLogoutResult: Equatable, Sendable {
+    var ok: Bool
+    var error: String
+
+    init(dict: [String: Any]) {
+        ok = dict["ok"] as? Bool ?? false
+        error = dict["error"] as? String ?? ""
+    }
+}
+
+protocol AuthSessionReading: Sendable {
+    func logout() async throws -> AuthLogoutResult
+}
+
 // MARK: - Injected admin API
 
 protocol AdminStatusReading: Sendable {
@@ -697,6 +714,7 @@ protocol ReasoningPreflightReading: Sendable {
 
 final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
                               ReasoningPreflightReading, DeviceLoginReading,
+                              AuthSessionReading,
                               @unchecked Sendable {
     private let runtime: RuntimeProfile
     private let session: URLSession
@@ -794,6 +812,17 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
             throw GatewayClientError.invalidPayload
         }
         return DeviceLoginSnapshot(dict: dict)
+    }
+
+    func logout() async throws -> AuthLogoutResult {
+        // Logout revokes against the platform before returning — same
+        // wider budget as the device start call.
+        let object = try await postJSON(
+            "v1/admin/auth/logout", body: [:], timeout: 15)
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return AuthLogoutResult(dict: dict)
     }
 
     private func getJSON(_ path: String,
