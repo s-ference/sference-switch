@@ -256,7 +256,9 @@ func TestWhoamiDeviceGrant(t *testing.T) {
 }
 
 // writeAuthJSONReturnPath is writeAuthJSON but also returns the path so
-// the test can inspect what login wrote.
+// the test can inspect what login wrote. It also points the gateway
+// pidfile at a temp path so a login's SIGHUP can never reach a real
+// router running on the dev machine.
 func writeAuthJSONReturnPath(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "credentials.json")
@@ -264,5 +266,6 @@ func writeAuthJSONReturnPath(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	t.Setenv("SFERENCE_SWITCH_AUTH_FILE", path)
+	t.Setenv("SFERENCE_SWITCH_GATEWAY_PIDFILE", filepath.Join(t.TempDir(), "gateway.pid"))
 	return path
 }
