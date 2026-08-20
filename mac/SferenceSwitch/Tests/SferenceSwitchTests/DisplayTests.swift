@@ -1000,43 +1000,6 @@ final class DisplayTests: XCTestCase {
                        .active)
     }
 
-    // MARK: - Reauthenticate dispatch (Terminal via osascript)
-
-    func testShellQuote() {
-        XCTAssertEqual(shellQuote("/Users/x/.local/bin/sference-switch"),
-                       "'/Users/x/.local/bin/sference-switch'")
-        // Spaces stay inside the quotes; embedded single quotes use
-        // the '\'' splice.
-        XCTAssertEqual(shellQuote("/Users/x y/bin"), "'/Users/x y/bin'")
-        XCTAssertEqual(shellQuote("a'b"), #"'a'\''b'"#)
-    }
-
-    func testAppleScriptStringLiteral() {
-        XCTAssertEqual(appleScriptStringLiteral("plain"), "\"plain\"")
-        XCTAssertEqual(appleScriptStringLiteral(#"say "hi""#),
-                       #""say \"hi\"""#)
-        // Backslashes escape before quotes so the two passes compose.
-        XCTAssertEqual(appleScriptStringLiteral(#"a\b"#), #""a\\b""#)
-    }
-
-    // The Terminal command is the fixed "auth login" verb on the
-    // resolved binary path; the script never carries server data
-    // (command-injection surface stays closed).
-    func testReauthAppleScript() {
-        XCTAssertEqual(
-            reauthAppleScript(binaryPath: "/Users/x/.local/bin/sference-switch"),
-            """
-            tell application "Terminal"
-                activate
-                do script "'/Users/x/.local/bin/sference-switch' auth login"
-            end tell
-            """)
-        // A hostile path cannot break out of the quoting layers.
-        let script = reauthAppleScript(binaryPath: #"/tmp/a"; rm -rf ~"#)
-        XCTAssertTrue(script.contains(
-            #"do script "'/tmp/a\"; rm -rf ~' auth login""#))
-    }
-
     func testClientStatusParsesFallbackStatus() {
         XCTAssertTrue(client("claude-code", route: "sference", fallback: true).fallbackActive)
         XCTAssertFalse(client("claude-code", route: "sference").fallbackActive)

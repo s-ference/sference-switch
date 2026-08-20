@@ -649,6 +649,32 @@ struct AdminStatusSnapshot: Equatable, Sendable {
     }
 }
 
+// MARK: - Device login
+
+/// Snapshot of the gateway-owned device-login flow (RFC 8628). The app
+/// renders the user code and opens the browser; the gateway owns the
+/// device-code request, the paced polling, and grant persistence.
+struct DeviceLoginSnapshot: Equatable, Sendable {
+    /// idle | pending | approved | failed
+    var state: String
+    var userCode: String
+    var verificationURI: String
+    var error: String
+
+    init(dict: [String: Any]) {
+        state = dict["state"] as? String ?? ""
+        userCode = dict["user_code"] as? String ?? ""
+        verificationURI = dict["verification_uri"] as? String ?? ""
+        error = dict["error"] as? String ?? ""
+    }
+}
+
+protocol DeviceLoginReading: Sendable {
+    func startDeviceLogin() async throws -> DeviceLoginSnapshot
+    func fetchDeviceLoginStatus() async throws -> DeviceLoginSnapshot
+    func cancelDeviceLogin() async throws -> DeviceLoginSnapshot
+}
+
 // MARK: - Injected admin API
 
 protocol AdminStatusReading: Sendable {
@@ -670,7 +696,7 @@ protocol ReasoningPreflightReading: Sendable {
 }
 
 final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
-                              ReasoningPreflightReading,
+                              ReasoningPreflightReading, DeviceLoginReading,
                               @unchecked Sendable {
     private let runtime: RuntimeProfile
     private let session: URLSession
@@ -739,6 +765,32 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
             throw GatewayClientError.invalidPayload
         }
         return snapshot
+    }
+
+    func startDeviceLogin() async throws -> DeviceLoginSnapshot {
+        let object = try await postJSON(
+            "v1/admin/auth/device/start", body: [:])
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return DeviceLoginSnapshot(dict: dict)
+    }
+
+    func fetchDeviceLoginStatus() async throws -> DeviceLoginSnapshot {
+        let object = try await getJSON("v1/admin/auth/device/status")
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return DeviceLoginSnapshot(dict: dict)
+    }
+
+    func cancelDeviceLogin() async throws -> DeviceLoginSnapshot {
+        let object = try await postJSON(
+            "v1/admin/auth/device/cancel", body: [:])
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return DeviceLoginSnapshot(dict: dict)
     }
 
     private func getJSON(_ path: String,

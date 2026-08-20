@@ -543,38 +543,6 @@ func subagentDispatchArgs(client: String, choice: SubagentChoice) -> [String] {
     return ["claude", "subagents", subagentChoiceArg(choice)]
 }
 
-/// POSIX single-quote shell quoting ('\'' splice for embedded quotes)
-/// so an unusual binary path (spaces, quotes) cannot alter the
-/// Terminal command it is spliced into.
-func shellQuote(_ s: String) -> String {
-    "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
-}
-
-/// An AppleScript double-quoted string literal (backslash, then quote
-/// escaping, per the AppleScript text syntax).
-func appleScriptStringLiteral(_ s: String) -> String {
-    "\"" + s
-        .replacingOccurrences(of: "\\", with: "\\\\")
-        .replacingOccurrences(of: "\"", with: "\\\"") + "\""
-}
-
-/// The osascript source for the Reauthenticate button: tell Terminal
-/// to run the interactive device-flow login. The command is the fixed
-/// verb "auth login" on the locally-resolved sference-switch path; nothing
-/// server-supplied ever reaches this string (admin payload fields are
-/// rendered as text only, never spliced into commands), so the
-/// command-injection surface through Terminal stays closed. The path
-/// is shell-quoted, then the whole command AppleScript-escaped.
-func reauthAppleScript(binaryPath: String) -> String {
-    let command = shellQuote(binaryPath) + " auth login"
-    return """
-    tell application "Terminal"
-        activate
-        do script \(appleScriptStringLiteral(command))
-    end tell
-    """
-}
-
 /// One-line diagnostic text for compact summaries and menu tooltips:
 /// newlines collapse to spaces and long details truncate with "...".
 func menuErrorLabel(_ raw: String, limit: Int = 80) -> String {

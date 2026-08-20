@@ -71,6 +71,11 @@ final class SferenceSwitchState: ObservableObject {
     @Published private(set) var stats: StatsSnapshot?
     @Published private(set) var cliVersion = ""
     @Published private(set) var reauthenticating = false
+    /// Latest device-login snapshot while an in-app sign-in is in flight
+    /// (pending shows the code to approve) or failed (shows the error);
+    /// nil when idle. The gateway owns the OAuth round trip — the app
+    /// only renders this state.
+    @Published private(set) var deviceLogin: DeviceLoginSnapshot?
     @Published private(set) var runtimeTrust: RuntimeTrust
     @Published private(set) var pendingGlobalRouting: PendingGlobalRouting?
     @Published private(set) var pendingFamilyRoutes: [String: PendingControlMutation] = [:]
@@ -95,10 +100,12 @@ final class SferenceSwitchState: ObservableObject {
     private let reader: any AdminStatusReading
     private let modelCatalogReader: any ModelCatalogReading
     private let reasoningPreflightReader: any ReasoningPreflightReading
+    private let deviceLoginReader: any DeviceLoginReading
     private let cliRunner: any CLIRunning
     private let clock: any RuntimeClock
     private let loginItemService: any LoginItemServicing
     private let previewRuntimeValidator: (RuntimeProfile) -> String?
+    private let browserOpener: (URL) -> Void
     private let pollCoordinator: PollCoordinator?
     private let mutationCoordinator: MutationCoordinator?
     private var reconcileTimers: [String: Task<Void, Never>] = [:]
@@ -106,6 +113,7 @@ final class SferenceSwitchState: ObservableObject {
     private var interactiveStatsRequested = false
     private var modelCatalogTask: Task<Void, Never>?
     private var modelCatalogGeneration: UInt64 = 0
+    private var deviceLoginTask: Task<Void, Never>?
     private(set) var menuVisible = false
     let variant: AppVariant
 
@@ -136,11 +144,15 @@ final class SferenceSwitchState: ObservableObject {
          reader: (any AdminStatusReading)? = nil,
          modelCatalogReader: (any ModelCatalogReading)? = nil,
          reasoningPreflightReader: (any ReasoningPreflightReading)? = nil,
+         deviceLoginReader: (any DeviceLoginReading)? = nil,
          cliRunner: any CLIRunning = SystemCLIRunner(),
          clock: any RuntimeClock = SystemRuntimeClock(),
          loginItemService: (any LoginItemServicing)? = nil,
          previewRuntimeValidator: @escaping (RuntimeProfile) -> String? = {
              previewRuntimeFilesystemError(runtime: $0)
+         },
+         browserOpener: @escaping (URL) -> Void = {
+             NSWorkspace.shared.open($0)
          },
          startPolling: Bool = true) {
         self.variant = variant
@@ -148,10 +160,12 @@ final class SferenceSwitchState: ObservableObject {
         self.reader = reader ?? apiClient
         self.modelCatalogReader = modelCatalogReader ?? apiClient
         self.reasoningPreflightReader = reasoningPreflightReader ?? apiClient
+        self.deviceLoginReader = deviceLoginReader ?? apiClient
         self.cliRunner = cliRunner
         self.clock = clock
         self.loginItemService = loginItemService ?? SystemLoginItemService()
         self.previewRuntimeValidator = previewRuntimeValidator
+        self.browserOpener = browserOpener
         if let identityError = variant.identityError {
             runtimeTrust = .identityMismatch(reason: identityError)
             lastError = identityError
@@ -203,12 +217,14 @@ final class SferenceSwitchState: ObservableObject {
         self.reader = reader
         modelCatalogReader = reader
         reasoningPreflightReader = reader
+        deviceLoginReader = reader
         cliRunner = SystemCLIRunner()
         clock = SystemRuntimeClock()
         loginItemService = SystemLoginItemService()
         previewRuntimeValidator = {
             previewRuntimeFilesystemError(runtime: $0)
         }
+        browserOpener = { NSWorkspace.shared.open($0) }
         pollCoordinator = nil
         mutationCoordinator = nil
         if let identityError = variant.identityError {
@@ -244,6 +260,8 @@ final class SferenceSwitchState: ObservableObject {
         interactiveRefreshTask?.cancel()
         interactiveRefreshTask = nil
         interactiveStatsRequested = false
+        deviceLoginTask?.cancel()
+        deviceLoginTask = nil
         invalidateModelCatalog()
         Task { await pollCoordinator?.stop() }
     }
@@ -1165,28 +1183,108 @@ final class SferenceSwitchState: ObservableObject {
 
     // MARK: - Supporting actions
 
+    /// In-app sign-in via the gateway-owned device flow (RFC 8628): the
+    /// gateway requests the code, polls the token endpoint, persists the
+    /// grant and live-reloads; the app only renders the code, opens the
+    /// browser, and polls the admin status endpoint. No Terminal, no
+    /// osascript — the login has to be in UI.
     func reauthenticate() async {
+        await beginDeviceLogin()
+    }
+
+    func beginDeviceLogin() async {
         guard !reauthenticating else { return }
         guard variant.channel == .stable else {
             lastError = "Authentication changes are disabled in Sference Switch Preview."
             return
         }
-        guard let binary = Self.locateSferenceSwitchBinary(variant: variant) else {
-            lastError = "sference-switch is not installed."
+        reauthenticating = true
+        let snapshot: DeviceLoginSnapshot
+        do {
+            snapshot = try await deviceLoginReader.startDeviceLogin()
+        } catch {
+            reauthenticating = false
+            lastError = "Sign-in could not be started. Is the router running?"
             return
         }
+        deviceLogin = snapshot
+        switch snapshot.state {
+        case "pending":
+            if let url = URL(string: snapshot.verificationURI),
+               !snapshot.verificationURI.isEmpty {
+                browserOpener(url)
+            }
+            startDeviceLoginPolling()
+        case "approved":
+            // Rejoined a flow that had already landed.
+            reauthenticating = false
+            deviceLogin = nil
+            await refresh()
+        case "failed":
+            reauthenticating = false
+            lastError = snapshot.error.isEmpty
+                ? "Sign-in could not be started."
+                : menuErrorLabel(snapshot.error)
+        default:
+            reauthenticating = false
+        }
+    }
 
-        reauthenticating = true
-        defer { reauthenticating = false }
-        let script = reauthAppleScript(binaryPath: binary.path)
-        let result = await cliRunner.run(CLIExecutionRequest(
-            binary: URL(fileURLWithPath: "/usr/bin/osascript"),
-            arguments: ["-e", script],
-            environment: processEnvironment(),
-            timeout: 10))
-        lastError = result.succeeded
-            ? nil
-            : "Opening Terminal for reauthentication failed."
+    func cancelDeviceLogin() async {
+        deviceLoginTask?.cancel()
+        deviceLoginTask = nil
+        _ = try? await deviceLoginReader.cancelDeviceLogin()
+        deviceLogin = nil
+        reauthenticating = false
+    }
+
+    private func startDeviceLoginPolling() {
+        deviceLoginTask?.cancel()
+        deviceLoginTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await self?.clock.sleep(seconds: 2)
+                guard let self, !Task.isCancelled else { return }
+                let keepPolling = await self.pollDeviceLoginStatus()
+                if !keepPolling { return }
+            }
+        }
+    }
+
+    /// One status read. Returns false once the flow reaches a terminal
+    /// state (approved / failed / gone) and polling should stop.
+    private func pollDeviceLoginStatus() async -> Bool {
+        let snapshot: DeviceLoginSnapshot
+        do {
+            snapshot = try await deviceLoginReader.fetchDeviceLoginStatus()
+        } catch {
+            // Transient read failure — keep polling; the flow has its
+            // own expiry deadline server-side.
+            return true
+        }
+        deviceLogin = snapshot
+        switch snapshot.state {
+        case "pending":
+            return true
+        case "approved":
+            deviceLoginTask = nil
+            reauthenticating = false
+            deviceLogin = nil
+            await refresh()
+            return false
+        case "failed":
+            deviceLoginTask = nil
+            reauthenticating = false
+            lastError = snapshot.error.isEmpty
+                ? "Sign-in failed."
+                : menuErrorLabel(snapshot.error)
+            return false
+        default:
+            // idle — cancelled server-side or replaced by a newer flow.
+            deviceLoginTask = nil
+            reauthenticating = false
+            deviceLogin = nil
+            return false
+        }
     }
 
     func startSystem() async {

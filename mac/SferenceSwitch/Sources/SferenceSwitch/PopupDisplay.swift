@@ -86,6 +86,34 @@ func authNeedsReauth(auth: AuthStatus?) -> Bool {
     auth?.health == "refresh_failed"
 }
 
+/// True when the gateway holds no usable OAuth credential at all (as
+/// opposed to a dead one, which is authNeedsReauth): drives the "Sign
+/// In with Sference…" menu item. Unknown auth (no status yet) stays
+/// false — the device flow needs the gateway, so offering sign-in
+/// before the first status read would just fail.
+func authIsSignedOut(auth: AuthStatus?) -> Bool {
+    guard let auth else { return false }
+    return !auth.signedIn || auth.health == "signed_out"
+}
+
+/// Menu title for an in-flight (or failed) in-app device login. The
+/// user code is the whole point of the flow, so it leads while
+/// pending; terminal states name themselves.
+func deviceLoginMenuTitle(_ snapshot: DeviceLoginSnapshot) -> String {
+    switch snapshot.state {
+    case "pending":
+        return snapshot.userCode.isEmpty
+            ? "Sign-In: Waiting for Code…"
+            : "Approve in Browser: \(snapshot.userCode)"
+    case "approved":
+        return "Sign-In Approved"
+    case "failed":
+        return "Sign-In Failed"
+    default:
+        return "Sign-In"
+    }
+}
+
 /// Secondary detail line under "reauthentication required": the last
 /// refresh error, collapsed to one menu-safe truncated line. Nil in
 /// every other state so a healthy popup gains no height.

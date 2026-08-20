@@ -232,6 +232,37 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             item.isEnabled = variant.channel == .stable && !state.reauthenticating
             menu.addItem(item)
             added = true
+        } else if state.deviceLogin == nil,
+                  authIsSignedOut(auth: state.auth),
+                  state.auth?.fallbackInUse != true {
+            let item = variant.channel == .preview
+                ? disabledItem("Preview Authentication Disabled")
+                : actionItem(
+                    "Sign In with Sference…",
+                    action: #selector(reauthenticate))
+            item.image = symbol("person.badge.key")
+            item.isEnabled = variant.channel == .stable && !state.reauthenticating
+            menu.addItem(item)
+            added = true
+        }
+
+        if let login = state.deviceLogin {
+            let item = disabledItem(deviceLoginMenuTitle(login))
+            item.image = symbol("person.badge.key")
+            menu.addItem(item)
+            added = true
+            if login.state == "pending" && !login.userCode.isEmpty {
+                let copy = actionItem(
+                    "Copy Code",
+                    action: #selector(copyDeviceLoginCode))
+                copy.image = symbol("doc.on.doc")
+                menu.addItem(copy)
+                let cancel = actionItem(
+                    "Cancel Sign-In",
+                    action: #selector(cancelDeviceLogin))
+                cancel.image = symbol("xmark.circle")
+                menu.addItem(cancel)
+            }
         }
 
         for client in state.clients where client.enabled && client.fallbackActive {
@@ -364,6 +395,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func reauthenticate() {
         guard !isPreview, variant.channel == .stable else { return }
         Task { await state.reauthenticate() }
+    }
+
+    @objc private func copyDeviceLoginCode() {
+        guard let code = state.deviceLogin?.userCode,
+              !code.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+    }
+
+    @objc private func cancelDeviceLogin() {
+        Task { await state.cancelDeviceLogin() }
     }
 
     @objc private func startSystem() {
