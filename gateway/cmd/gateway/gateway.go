@@ -514,11 +514,19 @@ type Gateway struct {
 	reloadMu  sync.Mutex
 
 	// Shared auth state across all sference-routed listeners.
-	// With a static API key there is no refresh, no dead-credential
-	// detection, and no background tick: the key is either present
-	// (signed_in, health "ok") or absent (health "signed_out").
+	// oauthClient is nil when no credential resolves (health
+	// "signed_out"). For the switch's own device grant the client's
+	// transport refreshes lazily and reports outcomes via the notify
+	// callback below: terminal failures (grant revoked/expired) set
+	// authTerminal and flip health to "refresh_failed"; transient ones
+	// record authLastError but keep health "ok" (the next request retries).
 	oauthClient *http.Client
 	authMu      sync.Mutex
+
+	authTerminal    bool
+	authLastError   string
+	authLastErrorAt time.Time
+	authLastOKAt    time.Time
 
 	emailMu        sync.Mutex
 	emailCached    string
@@ -757,22 +765,44 @@ func (g *Gateway) shutdownAllClients() {
 	}
 }
 
-// refreshAuth reads the API key from the shared credentials file (or
-// SFERENCE_API_KEY env) and builds an http.Client that injects it as
-// "Authorization: Bearer <key>" on every upstream request. With a static
-// key there is no refresh, no dead-credential detection, and no background
-// tick: the key is either present (signed_in, health "ok") or absent
-// (health "signed_out"). SIGHUP re-reads the file so `sference auth login`
-// + reload picks up a new key immediately.
+// refreshAuth resolves the Sference credential (env, the switch's own
+// auth file, or the shared CLI file — see internal/auth) and builds an
+// http.Client that injects it as "Authorization: Bearer <token>" on every
+// upstream request. For the switch's own device grant the client's
+// transport refreshes lazily and reports every refresh outcome through
+// the notify callback: a terminal rejection (invalid_grant — revoked,
+// expired, or reuse-detected) flips health to "refresh_failed" so the app
+// surfaces "reauthentication required"; transient failures are recorded
+// but keep health "ok". SIGHUP re-reads the files so
+// `sference-switch auth login` (or a CLI login to the shared file) is
+// picked up immediately.
 func (g *Gateway) refreshAuth() {
 	g.authMu.Lock()
 	defer g.authMu.Unlock()
-	client, _, _, err := auth.HTTPClientWithNotify(context.Background(), "", "", nil)
+	notify := func(_ string, err error) {
+		g.authMu.Lock()
+		defer g.authMu.Unlock()
+		if err == nil {
+			g.authLastOKAt = time.Now()
+			return
+		}
+		g.authLastError = err.Error()
+		g.authLastErrorAt = time.Now()
+		if auth.IsTerminalAuthError(err) {
+			g.authTerminal = true
+		}
+		fmt.Fprintf(os.Stderr, "[gateway] auth refresh: %v\n", err)
+	}
+	client, _, _, err := auth.HTTPClientWithNotify(context.Background(), "", "", notify)
 	switch {
 	case err == nil:
 		g.oauthClient = client
+		g.authTerminal = false
+		g.authLastError = ""
 	case errors.Is(err, auth.ErrNotSignedIn):
 		g.oauthClient = nil
+		g.authTerminal = false
+		g.authLastError = ""
 	default:
 		g.oauthClient = nil
 		fmt.Fprintf(os.Stderr, "[gateway] auth: %v\n", err)
@@ -783,11 +813,18 @@ func (g *Gateway) refreshAuth() {
 }
 
 // authHealthLocked derives the health enum. Caller holds authMu.
-//   - signed_out: no API key found in env or credentials file
-//   - ok:         API key present, no known problem
+//   - signed_out:     no credential found in env or any credentials file
+//   - refresh_failed: the stored device grant was terminally rejected
+//     (revoked/expired) — re-login required; the app renders
+//     "reauthentication required" for this exact value
+//   - ok:             credential present, no known problem (transient
+//     refresh errors are recorded but do not flip this)
 func (g *Gateway) authHealthLocked() string {
 	if g.oauthClient == nil {
 		return "signed_out"
+	}
+	if g.authTerminal {
+		return "refresh_failed"
 	}
 	return "ok"
 }
@@ -804,7 +841,10 @@ func (g *Gateway) authHealth() authHealthState {
 	g.authMu.Lock()
 	defer g.authMu.Unlock()
 	return authHealthState{
-		Health: g.authHealthLocked(),
+		Health:      g.authHealthLocked(),
+		LastError:   g.authLastError,
+		LastErrorAt: g.authLastErrorAt,
+		LastOKAt:    g.authLastOKAt,
 	}
 }
 

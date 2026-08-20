@@ -101,7 +101,7 @@ func warnMissingSferenceCreds(names []string, out io.Writer) {
 	for _, n := range names {
 		fmt.Fprintf(out, "[gateway]   - %s\n", n)
 	}
-	fmt.Fprintln(out, "[gateway] Fix: run 'sference auth login', or set SFERENCE_API_KEY in")
+	fmt.Fprintln(out, "[gateway] Fix: run 'sference-switch auth login', or set SFERENCE_API_KEY in")
 	fmt.Fprintf(out, "[gateway] %s (or via global.auth.sference in gateway.yaml).\n", config.EnvFilePath())
 	fmt.Fprintln(out, rule)
 }
