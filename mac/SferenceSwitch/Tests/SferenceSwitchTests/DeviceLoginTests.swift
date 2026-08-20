@@ -108,9 +108,12 @@ final class DeviceLoginTests: XCTestCase {
         variant: AppVariant? = nil,
         deviceReader: FakeDeviceLoginReader,
         adminReader: StubAdminReader = StubAdminReader(),
-        recorder: URLRecorder = URLRecorder()
+        recorder: URLRecorder? = nil
     ) -> SferenceSwitchState {
-        SferenceSwitchState(
+        // Default-parameter expressions evaluate in a nonisolated
+        // context, so the MainActor recorder is built in the body.
+        let recorder = recorder ?? URLRecorder()
+        return SferenceSwitchState(
             variant: variant ?? stableVariant(),
             reader: adminReader,
             deviceLoginReader: deviceReader,

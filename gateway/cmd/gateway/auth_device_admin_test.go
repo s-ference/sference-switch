@@ -27,7 +27,7 @@ func newDeviceLoginTestServer(t *testing.T, approveAfter int32) *deviceLoginTest
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"device_code": "dc-admin", "user_code": "WXYZ-1234",
 			"verification_uri": "https://app.sference.com/device",
-			"expires_in": 600, "interval": 1,
+			"expires_in":       600, "interval": 1,
 		})
 	})
 	mux.HandleFunc("/v1/oauth/token", func(w http.ResponseWriter, r *http.Request) {
@@ -219,4 +219,3 @@ func TestDeviceLoginAdminMethodNotAllowed(t *testing.T) {
 		t.Fatalf("GET start = %d, want 405", resp.StatusCode)
 	}
 }
-
