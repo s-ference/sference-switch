@@ -64,10 +64,14 @@ private struct FastClock: RuntimeClock {
 
 private actor FakeAuthSessionReader: AuthSessionReading {
     private(set) var logoutCalls = 0
+    private(set) var authInfoCalls = 0
     private var result: Result<AuthLogoutResult, Error>
+    var authInfo: AuthInfoSnapshot
 
-    init(result: AuthLogoutResult = AuthLogoutResult(dict: ["ok": true])) {
+    init(result: AuthLogoutResult = AuthLogoutResult(dict: ["ok": true]),
+         authInfo: AuthInfoSnapshot = AuthInfoSnapshot(dict: [:])) {
         self.result = .success(result)
+        self.authInfo = authInfo
     }
 
     func fail(with error: Error) {
@@ -77,6 +81,11 @@ private actor FakeAuthSessionReader: AuthSessionReading {
     func logout() async throws -> AuthLogoutResult {
         logoutCalls += 1
         return try result.get()
+    }
+
+    func fetchAuthInfo() async throws -> AuthInfoSnapshot {
+        authInfoCalls += 1
+        return authInfo
     }
 }
 
@@ -157,18 +166,24 @@ final class DeviceLoginTests: XCTestCase {
             "state": "pending",
             "user_code": "WXYZ-1234",
             "verification_uri": "https://app.sference.com/device",
+            "verification_uri_complete":
+                "https://app.sference.com/device?code=WXYZ1234",
             "expires_at": "2026-08-19T12:00:00Z",
         ])
         XCTAssertEqual(snapshot.state, "pending")
         XCTAssertEqual(snapshot.userCode, "WXYZ-1234")
         XCTAssertEqual(
             snapshot.verificationURI, "https://app.sference.com/device")
+        XCTAssertEqual(
+            snapshot.verificationURIComplete,
+            "https://app.sference.com/device?code=WXYZ1234")
         XCTAssertEqual(snapshot.error, "")
 
         let minimal = DeviceLoginSnapshot(dict: ["state": "idle"])
         XCTAssertEqual(minimal.state, "idle")
         XCTAssertEqual(minimal.userCode, "")
         XCTAssertEqual(minimal.verificationURI, "")
+        XCTAssertEqual(minimal.verificationURIComplete, "")
     }
 
     func testBeginDeviceLoginOpensBrowserAndCompletesOnApproval() async {
@@ -379,6 +394,184 @@ final class DeviceLoginTests: XCTestCase {
             recorder.urls,
             [URL(string: "https://app.sference.com/device")!,
              URL(string: "https://app.sference.com/device")!])
+    }
+
+    func testBeginDeviceLoginPrefersCompleteVerificationURI() async {
+        // The gateway-built verification_uri_complete prefills the code
+        // on the console's /device page — the browser must open it, not
+        // the bare URI.
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: [
+                "state": "pending",
+                "user_code": "WXYZ-1234",
+                "verification_uri": "https://app.sference.com/device",
+                "verification_uri_complete":
+                    "https://app.sference.com/device?code=WXYZ1234",
+            ]))
+        let recorder = URLRecorder()
+        let state = makeState(deviceReader: deviceReader, recorder: recorder)
+        defer { state.stop() }
+
+        await state.beginDeviceLogin()
+
+        XCTAssertEqual(
+            recorder.urls,
+            [URL(string: "https://app.sference.com/device?code=WXYZ1234")!])
+        state.openDeviceLoginVerificationPage()
+        XCTAssertEqual(recorder.urls.count, 2)
+        XCTAssertEqual(
+            recorder.urls[1],
+            URL(string: "https://app.sference.com/device?code=WXYZ1234")!)
+    }
+
+    func testDeviceLoginBrowserURLFallsBackToPlainURI() {
+        // Older gateways carry no verification_uri_complete.
+        let legacy = DeviceLoginSnapshot(dict: [
+            "state": "pending",
+            "verification_uri": "https://app.sference.com/device",
+        ])
+        XCTAssertEqual(
+            deviceLoginBrowserURL(legacy),
+            URL(string: "https://app.sference.com/device")!)
+        XCTAssertNil(deviceLoginBrowserURL(
+            DeviceLoginSnapshot(dict: ["state": "pending"])))
+    }
+
+    // MARK: - Account card (overview)
+
+    func testAuthInfoSnapshotParses() {
+        let info = AuthInfoSnapshot(dict: [
+            "signed_in": true,
+            "health": "ok",
+            "profile": "default",
+            "email": "user@example.com",
+            "expires_at": "2026-08-20T12:00:00Z",
+            "fallback_in_use": false,
+        ])
+        XCTAssertTrue(info.signedIn)
+        XCTAssertEqual(info.email, "user@example.com")
+        XCTAssertEqual(info.expiresAt, "2026-08-20T12:00:00Z")
+
+        let minimal = AuthInfoSnapshot(dict: [:])
+        XCTAssertFalse(minimal.signedIn)
+        XCTAssertEqual(minimal.email, "")
+        XCTAssertEqual(minimal.expiresAt, "")
+    }
+
+    func testOverviewDidShowLoadsAuthInfoAndAdoptsPendingFlow() async {
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: ["state": "idle"]),
+            statuses: [
+                DeviceLoginSnapshot(dict: [
+                    "state": "pending",
+                    "user_code": "ADOP-TED1",
+                    "verification_uri": "https://app.sference.com/device",
+                ]),
+            ])
+        let sessionReader = FakeAuthSessionReader(
+            authInfo: AuthInfoSnapshot(dict: [
+                "signed_in": true, "email": "user@example.com",
+            ]))
+        let recorder = URLRecorder()
+        let state = makeState(
+            deviceReader: deviceReader,
+            authSessionReader: sessionReader,
+            recorder: recorder)
+        defer { state.stop() }
+
+        state.overviewDidShow()
+        // overviewDidShow kicks two unstructured tasks; give them a turn.
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        let infoCalls = await sessionReader.authInfoCalls
+        XCTAssertGreaterThanOrEqual(infoCalls, 1)
+        XCTAssertEqual(state.authInfo?.email, "user@example.com")
+        XCTAssertTrue(state.reauthenticating)
+        XCTAssertEqual(state.deviceLogin?.userCode, "ADOP-TED1")
+        XCTAssertTrue(recorder.urls.isEmpty)  // adoption opens no browser
+    }
+
+    func testSignOutRefreshesAuthInfo() async {
+        let deviceReader = FakeDeviceLoginReader(
+            start: DeviceLoginSnapshot(dict: ["state": "idle"]))
+        let sessionReader = FakeAuthSessionReader(
+            result: AuthLogoutResult(dict: ["ok": true]),
+            authInfo: AuthInfoSnapshot(dict: ["signed_in": false]))
+        let state = makeState(
+            deviceReader: deviceReader,
+            authSessionReader: sessionReader)
+        defer { state.stop() }
+
+        await state.signOut()
+
+        let infoCalls = await sessionReader.authInfoCalls
+        XCTAssertGreaterThanOrEqual(infoCalls, 1)
+        XCTAssertEqual(state.authInfo?.signedIn, false)
+    }
+
+    func testAccountCardPresentation() {
+        let signedInAuth = AuthStatus(dict: [
+            "signed_in": true, "health": "ok",
+        ])
+        let signedOutAuth = AuthStatus(dict: [
+            "signed_in": false, "health": "signed_out",
+        ])
+        let deadAuth = AuthStatus(dict: [
+            "signed_in": true, "health": "refresh_failed",
+        ])
+        let pending = DeviceLoginSnapshot(dict: [
+            "state": "pending", "user_code": "WXYZ-1234",
+        ])
+        let info = AuthInfoSnapshot(dict: [
+            "email": "user@example.com", "expires_at": "2026-08-20T12:00:00Z",
+        ])
+
+        // No status read yet renders no actions.
+        XCTAssertEqual(
+            accountCardPresentation(
+                auth: nil, authInfo: nil, deviceLogin: nil),
+            .unavailable)
+        XCTAssertEqual(
+            accountCardPresentation(
+                auth: signedOutAuth, authInfo: nil, deviceLogin: nil),
+            .signedOut)
+        XCTAssertEqual(
+            accountCardPresentation(
+                auth: deadAuth, authInfo: nil, deviceLogin: nil),
+            .reauthRequired)
+        XCTAssertEqual(
+            accountCardPresentation(
+                auth: signedInAuth, authInfo: info, deviceLogin: nil),
+            .signedIn(
+                email: "user@example.com",
+                expiresAt: "2026-08-20T12:00:00Z"))
+        // A pending flow wins over every auth state.
+        XCTAssertEqual(
+            accountCardPresentation(
+                auth: signedInAuth, authInfo: info, deviceLogin: pending),
+            .pending(code: "WXYZ-1234"))
+        XCTAssertEqual(
+            accountCardPresentation(
+                auth: nil, authInfo: nil, deviceLogin: pending),
+            .pending(code: "WXYZ-1234"))
+    }
+
+    func testAccountSignedInCaption() {
+        XCTAssertEqual(
+            accountSignedInCaption(email: "", expiresAt: ""),
+            "Signed in with an API key.")
+        XCTAssertEqual(
+            accountSignedInCaption(email: "user@example.com", expiresAt: ""),
+            "Signed in as user@example.com.")
+        XCTAssertEqual(
+            accountSignedInCaption(
+                email: "user@example.com",
+                expiresAt: "not-a-date"),
+            "Signed in as user@example.com.")
+        let expiring = accountSignedInCaption(
+            email: "user@example.com",
+            expiresAt: "2099-01-01T00:00:00Z")
+        XCTAssertTrue(expiring.hasPrefix("Signed in as user@example.com · session expires "))
     }
 
     // MARK: - Sign out

@@ -659,12 +659,17 @@ struct DeviceLoginSnapshot: Equatable, Sendable {
     var state: String
     var userCode: String
     var verificationURI: String
+    /// verification_uri with ?code= appended — the console's /device page
+    /// prefills the code, so the user only clicks Approve.
+    var verificationURIComplete: String
     var error: String
 
     init(dict: [String: Any]) {
         state = dict["state"] as? String ?? ""
         userCode = dict["user_code"] as? String ?? ""
         verificationURI = dict["verification_uri"] as? String ?? ""
+        verificationURIComplete =
+            dict["verification_uri_complete"] as? String ?? ""
         error = dict["error"] as? String ?? ""
     }
 }
@@ -690,6 +695,30 @@ struct AuthLogoutResult: Equatable, Sendable {
 
 protocol AuthSessionReading: Sendable {
     func logout() async throws -> AuthLogoutResult
+    func fetchAuthInfo() async throws -> AuthInfoSnapshot
+}
+
+/// GET /v1/admin/auth/status — who the gateway is signed in as. The main
+/// status poller carries only signed_in/health; the account card fetches
+/// this lazily (the gateway resolves the email against the platform and
+/// caches it, so it must stay off the hot poll path).
+struct AuthInfoSnapshot: Equatable, Sendable {
+    var signedIn: Bool
+    var health: String
+    var profile: String
+    var email: String
+    /// RFC 3339 access-token expiry; "" for static keys.
+    var expiresAt: String
+    var fallbackInUse: Bool
+
+    init(dict: [String: Any]) {
+        signedIn = dict["signed_in"] as? Bool ?? false
+        health = dict["health"] as? String ?? ""
+        profile = dict["profile"] as? String ?? ""
+        email = dict["email"] as? String ?? ""
+        expiresAt = dict["expires_at"] as? String ?? ""
+        fallbackInUse = dict["fallback_in_use"] as? Bool ?? false
+    }
 }
 
 // MARK: - Injected admin API
@@ -825,8 +854,19 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
         return AuthLogoutResult(dict: dict)
     }
 
+    func fetchAuthInfo() async throws -> AuthInfoSnapshot {
+        // The gateway may proxy a /v1/users/me lookup on a cache miss —
+        // wider budget than local-only reads.
+        let object = try await getJSON("v1/admin/auth/status", timeout: 10)
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return AuthInfoSnapshot(dict: dict)
+    }
+
     private func getJSON(_ path: String,
-                         query: [URLQueryItem] = []) async throws -> Any {
+                         query: [URLQueryItem] = [],
+                         timeout: TimeInterval? = nil) async throws -> Any {
         var url = adminBaseURL(runtime: runtime)
         url.appendPathComponent(path)
         if !query.isEmpty,
@@ -836,7 +876,11 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
                 url = queriedURL
             }
         }
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else {
             throw GatewayClientError.badResponse(

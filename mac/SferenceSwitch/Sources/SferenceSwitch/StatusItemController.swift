@@ -152,14 +152,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(login)
         }
 
-        if variant.channel == .stable, state.auth?.signedIn == true {
-            let signOut = actionItem(
-                "Sign Out of Sference…",
-                action: #selector(signOut))
-            signOut.image = symbol("person.crop.circle.badge.minus")
-            menu.addItem(signOut)
-        }
-
         menu.addItem(.separator())
         menu.addItem(actionItem(
             "Quit \(variant.displayName)",
@@ -230,14 +222,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             added = true
         }
 
+        // Auth problems route to the overview's Account card — the
+        // device-flow code and sign-out live in the window, not the menu.
         if authNeedsReauth(auth: state.auth) {
             let item = variant.channel == .preview
                 ? disabledItem("Preview Authentication Disabled")
                 : actionItem(
                     "Authentication Required…",
-                    action: #selector(reauthenticate))
+                    action: #selector(openConfigurationWindow(_:)))
             item.image = symbol("key.fill")
-            item.isEnabled = variant.channel == .stable && !state.reauthenticating
+            item.isEnabled = variant.channel == .stable
             menu.addItem(item)
             added = true
         } else if state.deviceLogin == nil,
@@ -247,37 +241,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 ? disabledItem("Preview Authentication Disabled")
                 : actionItem(
                     "Sign In with Sference…",
-                    action: #selector(reauthenticate))
+                    action: #selector(openConfigurationWindow(_:)))
             item.image = symbol("person.badge.key")
-            item.isEnabled = variant.channel == .stable && !state.reauthenticating
+            item.isEnabled = variant.channel == .stable
             menu.addItem(item)
             added = true
-        }
-
-        if let login = state.deviceLogin {
-            if login.state == "pending" && !login.userCode.isEmpty {
-                // Clicking the code re-opens the verification page —
-                // covers adopted flows and closed tabs.
-                let item = actionItem(
-                    deviceLoginMenuTitle(login),
-                    action: #selector(openDeviceLoginPage))
-                item.image = symbol("person.badge.key")
-                menu.addItem(item)
-                let copy = actionItem(
-                    "Copy Code",
-                    action: #selector(copyDeviceLoginCode))
-                copy.image = symbol("doc.on.doc")
-                menu.addItem(copy)
-                let cancel = actionItem(
-                    "Cancel Sign-In",
-                    action: #selector(cancelDeviceLogin))
-                cancel.image = symbol("xmark.circle")
-                menu.addItem(cancel)
-            } else {
-                let item = disabledItem(deviceLoginMenuTitle(login))
-                item.image = symbol("person.badge.key")
-                menu.addItem(item)
-            }
+        } else if let login = state.deviceLogin {
+            // A sign-in is in flight in the window — point at it.
+            let item = actionItem(
+                deviceLoginMenuTitle(login),
+                action: #selector(openConfigurationWindow(_:)))
+            item.image = symbol("person.badge.key")
+            item.isEnabled = !isPreview
+            menu.addItem(item)
             added = true
         }
 
@@ -406,38 +382,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func changeProxyEnabled(_ enabled: Bool) -> Bool {
         guard !isPreview else { return false }
         return state.requestProxyEnabled(enabled)
-    }
-
-    @objc private func reauthenticate() {
-        guard !isPreview, variant.channel == .stable else { return }
-        Task { await state.reauthenticate() }
-    }
-
-    @objc private func copyDeviceLoginCode() {
-        guard let code = state.deviceLogin?.userCode,
-              !code.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
-    }
-
-    @objc private func openDeviceLoginPage() {
-        state.openDeviceLoginVerificationPage()
-    }
-
-    @objc private func cancelDeviceLogin() {
-        Task { await state.cancelDeviceLogin() }
-    }
-
-    @objc private func signOut() {
-        guard !isPreview, variant.channel == .stable else { return }
-        let alert = NSAlert()
-        alert.messageText = "Sign Out of Sference?"
-        alert.informativeText = "The OAuth grant on this Mac will be revoked and removed. Sference routing stops until you sign in again."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Sign Out")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        Task { await state.signOut() }
     }
 
     @objc private func startSystem() {

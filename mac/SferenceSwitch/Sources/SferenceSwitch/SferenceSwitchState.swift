@@ -76,6 +76,10 @@ final class SferenceSwitchState: ObservableObject {
     /// nil when idle. The gateway owns the OAuth round trip — the app
     /// only renders this state.
     @Published private(set) var deviceLogin: DeviceLoginSnapshot?
+    /// Who the gateway is signed in as (email, token expiry). Fetched
+    /// lazily for the overview's account card — the gateway resolves the
+    /// email against the platform, so this stays off the hot status poll.
+    @Published private(set) var authInfo: AuthInfoSnapshot?
     @Published private(set) var runtimeTrust: RuntimeTrust
     @Published private(set) var pendingGlobalRouting: PendingGlobalRouting?
     @Published private(set) var pendingFamilyRoutes: [String: PendingControlMutation] = [:]
@@ -319,9 +323,16 @@ final class SferenceSwitchState: ObservableObject {
         // arguments.
         if variant.channel == .stable {
             Task { await refreshProxyState() }
-            // Surface a pending sign-in no matter who started it.
-            Task { await adoptDeviceLoginIfPending() }
         }
+    }
+
+    /// The overview owns the sign-in UI, so it also adopts a pending flow
+    /// no matter who started it (CLI, an earlier app run) and loads the
+    /// signed-in identity for the account card.
+    func overviewDidShow() {
+        guard variant.channel == .stable else { return }
+        Task { await adoptDeviceLoginIfPending() }
+        Task { await refreshAuthInfo() }
     }
 
     func menuDidHide() {
@@ -1194,10 +1205,6 @@ final class SferenceSwitchState: ObservableObject {
     /// grant and live-reloads; the app only renders the code, opens the
     /// browser, and polls the admin status endpoint. No Terminal, no
     /// osascript — the login has to be in UI.
-    func reauthenticate() async {
-        await beginDeviceLogin()
-    }
-
     func beginDeviceLogin() async {
         guard !reauthenticating else { return }
         guard variant.channel == .stable else {
@@ -1216,8 +1223,7 @@ final class SferenceSwitchState: ObservableObject {
         deviceLogin = snapshot
         switch snapshot.state {
         case "pending":
-            if let url = URL(string: snapshot.verificationURI),
-               !snapshot.verificationURI.isEmpty {
+            if let url = deviceLoginBrowserURL(snapshot) {
                 browserOpener(url)
             }
             startDeviceLoginPolling()
@@ -1226,6 +1232,7 @@ final class SferenceSwitchState: ObservableObject {
             reauthenticating = false
             deviceLogin = nil
             await refresh()
+            await refreshAuthInfo()
         case "failed":
             reauthenticating = false
             lastError = snapshot.error.isEmpty
@@ -1248,9 +1255,8 @@ final class SferenceSwitchState: ObservableObject {
     /// the tab, or the flow was adopted from elsewhere so no browser
     /// opened here).
     func openDeviceLoginVerificationPage() {
-        guard let uri = deviceLogin?.verificationURI,
-              !uri.isEmpty,
-              let url = URL(string: uri) else { return }
+        guard let snapshot = deviceLogin,
+              let url = deviceLoginBrowserURL(snapshot) else { return }
         browserOpener(url)
     }
 
@@ -1288,6 +1294,15 @@ final class SferenceSwitchState: ObservableObject {
             lastError = "Sign-out failed. Is the router running?"
         }
         await refresh()
+        await refreshAuthInfo()
+    }
+
+    /// Loads the signed-in identity (email, token expiry) for the
+    /// overview's account card. A failure clears the card's identity rows
+    /// rather than surfacing an error — the main status poll already
+    /// reports gateway trouble.
+    func refreshAuthInfo() async {
+        authInfo = try? await authSessionReader.fetchAuthInfo()
     }
 
     private func startDeviceLoginPolling() {
@@ -1322,6 +1337,7 @@ final class SferenceSwitchState: ObservableObject {
             reauthenticating = false
             deviceLogin = nil
             await refresh()
+            await refreshAuthInfo()
             return false
         case "failed":
             deviceLoginTask = nil

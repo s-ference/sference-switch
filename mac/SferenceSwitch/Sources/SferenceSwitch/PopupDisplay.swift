@@ -79,7 +79,7 @@ func authLineLabel(auth: AuthStatus?) -> String {
 }
 
 /// True only in the dead-credential state: drives the warning tint on
-/// the auth line, the Reauthenticate button, and (via
+/// the auth line, the overview's reauth row, and (via
 /// menubarIconState) the amber status icon. Transient "error" stays
 /// false so the popup never alarms on a blip.
 func authNeedsReauth(auth: AuthStatus?) -> Bool {
@@ -112,6 +112,84 @@ func deviceLoginMenuTitle(_ snapshot: DeviceLoginSnapshot) -> String {
     default:
         return "Sign-In"
     }
+}
+
+/// The browser URL for a pending device login: the gateway-built
+/// verification_uri_complete (console prefills the code from ?code=),
+/// falling back to the plain verification URI for older gateways.
+func deviceLoginBrowserURL(_ snapshot: DeviceLoginSnapshot) -> URL? {
+    let uri = snapshot.verificationURIComplete.isEmpty
+        ? snapshot.verificationURI
+        : snapshot.verificationURIComplete
+    guard !uri.isEmpty else { return nil }
+    return URL(string: uri)
+}
+
+// MARK: - Account card (overview)
+
+/// What the overview's Account card renders, derived from the hot auth
+/// status plus the lazily-fetched identity. Signed-out and signed-in
+/// both collapse to the sign-in row while a device flow is pending —
+/// the code is the only thing that matters then.
+enum AccountCardPresentation: Equatable {
+    /// No credential, no flow: offer sign-in.
+    case signedOut
+    /// Flow in flight: show the code (may be "" while the gateway is
+    /// still answering start) and the approve/cancel actions.
+    case pending(code: String)
+    /// Credential present: email ("" for static API keys) and the
+    /// access-token expiry ("" when unknown).
+    case signedIn(email: String, expiresAt: String)
+    /// The stored grant was terminally rejected — sign-in again.
+    case reauthRequired
+    /// No status read yet (or gateway down): render no actions.
+    case unavailable
+}
+
+func accountCardPresentation(
+    auth: AuthStatus?,
+    authInfo: AuthInfoSnapshot?,
+    deviceLogin: DeviceLoginSnapshot?
+) -> AccountCardPresentation {
+    if let deviceLogin, deviceLogin.state == "pending" {
+        return .pending(code: deviceLogin.userCode)
+    }
+    guard let auth else { return .unavailable }
+    if authNeedsReauth(auth: auth) {
+        return .reauthRequired
+    }
+    if auth.signedIn, auth.health != "signed_out" {
+        return .signedIn(
+            email: authInfo?.email ?? "",
+            expiresAt: authInfo?.expiresAt ?? "")
+    }
+    return .signedOut
+}
+
+/// Caption under a signed-in account row: the credential kind plus the
+/// token expiry when known. Static API keys never expire client-side.
+func accountSignedInCaption(email: String, expiresAt: String) -> String {
+    if email.isEmpty {
+        return "Signed in with an API key."
+    }
+    if let expiry = parseAuthTokenExpiry(expiresAt) {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        let delta = formatter.localizedString(
+            for: expiry, relativeTo: Date())
+        return "Signed in as \(email) · session expires \(delta)."
+    }
+    return "Signed in as \(email)."
+}
+
+/// Parses the RFC 3339 expiry the gateway reports; nil when absent or
+/// malformed (static keys carry no expiry).
+func parseAuthTokenExpiry(_ rfc3339: String) -> Date? {
+    guard !rfc3339.isEmpty else { return nil }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.date(from: rfc3339)
+        ?? ISO8601DateFormatter().date(from: rfc3339)
 }
 
 /// Secondary detail line under "reauthentication required": the last
