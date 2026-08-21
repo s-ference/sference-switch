@@ -23,6 +23,10 @@ private actor FakeDeviceLoginReader: DeviceLoginReading {
     private(set) var cancelCalls = 0
     private var startResult: Result<DeviceLoginSnapshot, Error>
     private var statusQueue: [DeviceLoginSnapshot]
+    /// Once the scripted queue drains the gateway keeps answering with
+    /// the flow's current snapshot — repeat the last one rather than
+    /// inventing an empty pending that would wipe the user code.
+    private var lastStatus: DeviceLoginSnapshot?
 
     init(start: DeviceLoginSnapshot,
          statuses: [DeviceLoginSnapshot] = []) {
@@ -42,9 +46,11 @@ private actor FakeDeviceLoginReader: DeviceLoginReading {
     func fetchDeviceLoginStatus() async throws -> DeviceLoginSnapshot {
         statusCalls += 1
         if statusQueue.isEmpty {
-            return DeviceLoginSnapshot(dict: ["state": "pending"])
+            return lastStatus ?? DeviceLoginSnapshot(dict: ["state": "pending"])
         }
-        return statusQueue.removeFirst()
+        let next = statusQueue.removeFirst()
+        lastStatus = next
+        return next
     }
 
     func cancelDeviceLogin() async throws -> DeviceLoginSnapshot {
