@@ -161,6 +161,77 @@ func TestLoadNothingIsNil(t *testing.T) {
 	}
 }
 
+// --- Sign-out marker -------------------------------------------------------
+
+// backdate pins a file's mtime so marker-vs-shared ordering does not
+// depend on filesystem timestamp granularity.
+func backdate(t *testing.T, path string, mtime time.Time) {
+	t.Helper()
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSignOutMarkerSuppressesSharedFallback(t *testing.T) {
+	// Sign-out with only a shared credential present: the marker must
+	// keep Load signed out even though the CLI's file is still there.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SFERENCE_API_KEY", "")
+	sharedPath := writeShared(t, v2JSON(time.Now().Add(time.Hour)))
+	backdate(t, sharedPath, time.Now().Add(-time.Minute))
+
+	if err := Delete(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(signOutMarkerPath()); err != nil {
+		t.Fatalf("Delete must stamp the sign-out marker: %v", err)
+	}
+	if tok, _, _ := Load(""); tok != nil {
+		t.Fatalf("tok = %+v, want nil (sign-out suppresses shared fallback)", tok)
+	}
+	if _, err := os.Stat(sharedPath); err != nil {
+		t.Fatalf("shared file must survive a switch sign-out: %v", err)
+	}
+}
+
+func TestSignOutMarkerLiftsWhenSharedFileIsRewritten(t *testing.T) {
+	// A CLI login/refresh after the sign-out rewrites the shared file
+	// with a newer mtime — a newer session the switch may ride again.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SFERENCE_API_KEY", "")
+	sharedPath := writeShared(t, v2JSON(time.Now().Add(time.Hour)))
+	backdate(t, sharedPath, time.Now().Add(-time.Minute))
+	if err := Delete(nil); err != nil {
+		t.Fatal(err)
+	}
+	writeShared(t, v2JSON(time.Now().Add(2*time.Hour)))
+	backdate(t, sharedPath, time.Now().Add(time.Minute))
+
+	tok, _, _ := Load("")
+	if tok == nil || tok.Kind != KindSharedDevice {
+		t.Fatalf("tok = %+v, want shared grant served again after CLI rewrite", tok)
+	}
+}
+
+func TestSaveClearsSignOutMarker(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SFERENCE_API_KEY", "")
+	sharedPath := writeShared(t, v2JSON(time.Now().Add(time.Hour)))
+	backdate(t, sharedPath, time.Now().Add(-time.Minute))
+	if err := Delete(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(nil, &StoredToken{AccessToken: "sk-new"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(signOutMarkerPath()); !os.IsNotExist(err) {
+		t.Fatalf("login must clear the sign-out marker: %v", err)
+	}
+}
+
 // --- Save / Delete ---------------------------------------------------------
 
 func TestSaveDeviceGrantShape(t *testing.T) {

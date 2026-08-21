@@ -12,14 +12,17 @@ import (
 
 // auth_logout_admin.go implements POST /v1/admin/auth/logout — the in-UI
 // sign-out, with the same semantics as `sference-switch auth logout`:
-// revoke the grant server-side (best-effort, so it disappears from the
-// console's devices page), remove the switch's own auth file, and
-// live-reload the credential.
+// revoke the grant server-side when it is the switch's own (best-effort,
+// so it disappears from the console's devices page), remove the own auth
+// file, and live-reload the credential.
 //
-// Two refusals, both 200 with ok:false so the app can show the reason:
-// an env-var credential (SFERENCE_API_KEY) cannot be removed from here,
-// and a shared-file credential belongs to the sference CLI — deleting
-// it would sign the CLI out too.
+// auth.Delete also stamps the sign-out marker that suppresses the shared
+// CLI fallback — without it the reload would immediately re-sign the
+// switch in from ~/.sference/credentials.json and sign-out would look
+// like a no-op. A shared-file credential is never revoked or deleted (it
+// belongs to the sference CLI); the marker alone signs the switch out of
+// it. The one refusal is an env-var credential (SFERENCE_API_KEY), which
+// no file operation can remove.
 
 func (g *Gateway) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -31,27 +34,16 @@ func (g *Gateway) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if tok == nil {
-		writeJSON(w, 200, map[string]any{"ok": true, "state": "signed_out"})
-		return
-	}
-	switch tok.Kind {
-	case auth.KindEnv:
-		// Messages stay under 80 chars: the menubar renders them via
+	if tok != nil && tok.Kind == auth.KindEnv {
+		// Message stays under 80 chars: the menubar renders it via
 		// menuErrorLabel, which truncates beyond that.
 		writeJSON(w, 200, map[string]any{
 			"ok":    false,
 			"error": "credential comes from SFERENCE_API_KEY — unset the environment variable",
 		})
 		return
-	case auth.KindSharedDevice, auth.KindSharedStatic:
-		writeJSON(w, 200, map[string]any{
-			"ok":    false,
-			"error": "credential belongs to the sference CLI — run 'sference auth logout'",
-		})
-		return
 	}
-	if tok.Kind == auth.KindDevice && tok.RefreshToken != "" {
+	if tok != nil && tok.Kind == auth.KindDevice && tok.RefreshToken != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		if err := auth.RevokeToken(ctx, auth.DefaultHostFunc(), tok.RefreshToken); err != nil {

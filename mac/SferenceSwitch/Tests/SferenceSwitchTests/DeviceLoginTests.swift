@@ -410,7 +410,7 @@ final class DeviceLoginTests: XCTestCase {
         let sessionReader = FakeAuthSessionReader(
             result: AuthLogoutResult(dict: [
                 "ok": false,
-                "error": "credential belongs to the sference CLI — run 'sference auth logout'",
+                "error": "credential comes from SFERENCE_API_KEY — unset the environment variable",
             ]))
         let state = makeState(
             deviceReader: deviceReader,
@@ -421,7 +421,7 @@ final class DeviceLoginTests: XCTestCase {
 
         XCTAssertEqual(
             state.lastError,
-            "credential belongs to the sference CLI — run 'sference auth logout'")
+            "credential comes from SFERENCE_API_KEY — unset the environment variable")
     }
 
     func testSignOutTransportFailure() async {

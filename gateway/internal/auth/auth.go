@@ -207,6 +207,11 @@ func Load(_ string) (*StoredToken, *SaveLocator, error) {
 	if os.Getenv("SFERENCE_SWITCH_AUTH_FILE") == "" {
 		sharedPath := sharedCredentialsPath()
 		if tok := readCredentialsFile(sharedPath); tok != nil {
+			if sharedSuppressedBySignOut(sharedPath) {
+				// Explicit sign-out: stay signed out until the CLI
+				// rewrites its grant (login or refresh).
+				return nil, nil, nil
+			}
 			if tok.RefreshToken != "" {
 				if tok.expired() {
 					// The CLI owns this grant chain; an expired access
@@ -229,13 +234,47 @@ func Load(_ string) (*StoredToken, *SaveLocator, error) {
 // Save persists the credential to the switch's own auth file (0600 inside
 // a 0700 directory). A token with a RefreshToken is written in the v2
 // device-grant shape; otherwise the legacy {"token": ...} shape. The
-// shared CLI file is never written.
+// shared CLI file is never written. A successful save lifts any explicit
+// sign-out suppression (see signOutMarkerPath).
 func Save(_ *SaveLocator, tok *StoredToken) error {
 	if tok == nil {
 		return errors.New("sference-switch: cannot save nil token")
 	}
 	path := ownCredentialsPath()
-	return writeCredentialsFile(path, tok)
+	if err := writeCredentialsFile(path, tok); err != nil {
+		return err
+	}
+	// A login is the explicit undo of a sign-out.
+	if err := os.Remove(signOutMarkerPath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// signOutMarkerPath is a sentinel next to the switch's own auth file
+// recording an explicit sign-out. While it exists and is not older than
+// the shared CLI credentials file, Load skips the shared fallback —
+// without it, deleting the own file would immediately re-sign the switch
+// in from the CLI's grant, making "sign out" look like a no-op. The
+// suppression lifts when the shared file is rewritten after the sign-out
+// (a CLI login or refresh is a newer session the switch may ride again)
+// and is removed outright by Save.
+func signOutMarkerPath() string {
+	return filepath.Join(filepath.Dir(ownCredentialsPath()), "signed-out")
+}
+
+// sharedSuppressedBySignOut reports whether an explicit sign-out
+// suppresses the shared credential at sharedPath right now.
+func sharedSuppressedBySignOut(sharedPath string) bool {
+	marker, err := os.Stat(signOutMarkerPath())
+	if err != nil {
+		return false
+	}
+	shared, err := os.Stat(sharedPath)
+	if err != nil {
+		return false
+	}
+	return !shared.ModTime().After(marker.ModTime())
 }
 
 // writeCredentialsFile atomically writes tok to path: temp file in the
@@ -289,14 +328,22 @@ func writeCredentialsFile(path string, tok *StoredToken) error {
 	return os.Rename(tmpName, path)
 }
 
-// Delete removes the switch's own auth file. Best-effort: a missing file
-// is not an error. The shared CLI file is never removed.
+// Delete removes the switch's own auth file and records the explicit
+// sign-out (signOutMarkerPath) so the shared CLI fallback does not
+// immediately re-sign the switch in. Best-effort on the own file: a
+// missing file is not an error. The shared CLI file is never removed.
 func Delete(_ *SaveLocator) error {
 	path := ownCredentialsPath()
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return nil
+	marker := signOutMarkerPath()
+	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
+		return err
+	}
+	// Write (not O_CREATE) so a repeat sign-out refreshes the mtime —
+	// the marker must be newer than the shared file to suppress it.
+	return os.WriteFile(marker, []byte("signed out\n"), 0o600)
 }
 
 // CredFingerprint returns a non-reversible identity for the credential,
