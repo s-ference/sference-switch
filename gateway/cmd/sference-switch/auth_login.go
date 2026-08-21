@@ -102,8 +102,11 @@ func loginWithDeviceFlow() int {
 		return 1
 	}
 
-	fmt.Printf("\nTo sign in, open %s and enter code:\n\n    %s\n\n", dc.VerificationURI, dc.UserCode)
-	openBrowser(dc.VerificationURI)
+	// The complete URI prefills the code on the console's /device page —
+	// the user only clicks Approve.
+	complete := dc.VerificationURIComplete()
+	fmt.Printf("\nTo sign in, open %s and enter code:\n\n    %s\n\n", complete, dc.UserCode)
+	openBrowser(complete)
 	fmt.Printf("Waiting for approval (code expires in %d minutes)...\n", dc.ExpiresIn/60)
 
 	tokens, err := auth.PollForTokens(ctx, baseURL, dc.DeviceCode,

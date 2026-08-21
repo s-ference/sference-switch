@@ -172,7 +172,8 @@ func TestAuthLoginDeviceFlow(t *testing.T) {
 	if !strings.Contains(out, "ABCD-EFGH") {
 		t.Fatalf("output should show the user code:\n%s", out)
 	}
-	if len(*opened) != 1 || (*opened)[0] != "https://app.sference.com/device" {
+	// The browser gets the complete URI — the console prefills the code.
+	if len(*opened) != 1 || (*opened)[0] != "https://app.sference.com/device?code=ABCDEFGH" {
 		t.Fatalf("browser opens = %v", *opened)
 	}
 	data, err := os.ReadFile(authPath)

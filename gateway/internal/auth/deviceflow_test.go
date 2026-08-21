@@ -47,6 +47,27 @@ func newOAuthTestServer(t *testing.T) (*oauthTestServer, string) {
 	return s, srv.URL
 }
 
+func TestVerificationURIComplete(t *testing.T) {
+	cases := []struct {
+		uri, code, want string
+	}{
+		{"https://app.sference.com/device", "WXYZ-1234",
+			"https://app.sference.com/device?code=WXYZ1234"},
+		// An existing query string keeps its parameters.
+		{"https://app.sference.com/device?next=%2F", "WXYZ-1234",
+			"https://app.sference.com/device?next=%2F&code=WXYZ1234"},
+		// Missing parts degrade to the plain URI.
+		{"https://app.sference.com/device", "", "https://app.sference.com/device"},
+		{"", "WXYZ-1234", ""},
+	}
+	for _, c := range cases {
+		if got := VerificationURIComplete(c.uri, c.code); got != c.want {
+			t.Errorf("VerificationURIComplete(%q, %q) = %q, want %q",
+				c.uri, c.code, got, c.want)
+		}
+	}
+}
+
 func TestStartDeviceLogin(t *testing.T) {
 	s, baseURL := newOAuthTestServer(t)
 	s.deviceCode = func(payload map[string]string) (int, any) {

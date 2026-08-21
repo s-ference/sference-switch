@@ -44,6 +44,12 @@ type deviceLoginFlow struct {
 	cancel          context.CancelFunc
 }
 
+// verificationURIComplete renders the prefilled approval URL — the console
+// /device page reads ?code=, saving the user from typing the code.
+func (f *deviceLoginFlow) verificationURIComplete() string {
+	return auth.VerificationURIComplete(f.verificationURI, f.userCode)
+}
+
 var (
 	deviceLoginMu sync.Mutex
 	deviceLogin   = &deviceLoginFlow{state: deviceLoginIdle}
@@ -59,6 +65,9 @@ func deviceLoginSnapshot() map[string]any {
 	}
 	if deviceLogin.verificationURI != "" {
 		m["verification_uri"] = deviceLogin.verificationURI
+	}
+	if complete := deviceLogin.verificationURIComplete(); complete != "" {
+		m["verification_uri_complete"] = complete
 	}
 	if !deviceLogin.expiresAt.IsZero() {
 		m["expires_at"] = deviceLogin.expiresAt.UTC().Format(time.RFC3339)

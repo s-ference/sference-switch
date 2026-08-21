@@ -111,6 +111,13 @@ func TestDeviceLoginAdminFlow(t *testing.T) {
 	if startResp["user_code"] != "WXYZ-1234" || startResp["verification_uri"] == "" {
 		t.Fatalf("start missing code/URI: %v", startResp)
 	}
+	// The complete URI prefills the code on the console's /device page
+	// (dash stripped — the console treats it as presentation).
+	wantComplete := "https://app.sference.com/device?code=WXYZ1234"
+	if startResp["verification_uri_complete"] != wantComplete {
+		t.Fatalf("verification_uri_complete = %v, want %q",
+			startResp["verification_uri_complete"], wantComplete)
+	}
 
 	// A second start while pending rejoins the same flow (same code).
 	again := postAdmin(t, g, "/v1/admin/auth/device/start")

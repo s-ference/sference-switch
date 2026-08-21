@@ -16,7 +16,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // ClientID is registered on the platform (KNOWN_CLIENT_IDS in
@@ -65,6 +68,35 @@ type DeviceCodeResponse struct {
 	VerificationURI string `json:"verification_uri"`
 	ExpiresIn       int    `json:"expires_in"`
 	Interval        int    `json:"interval"`
+}
+
+// VerificationURIComplete is the RFC 8628 verification_uri_complete: the
+// console's /device page prefills the code from ?code=, so the user lands
+// on a ready-made approval form instead of typing 8 characters. The
+// platform does not return this field; the console's query-param contract
+// is stable, so the client constructs it. The dash in XXXX-XXXX is
+// presentation — the console strips non-alphanumerics.
+func (dc *DeviceCodeResponse) VerificationURIComplete() string {
+	return VerificationURIComplete(dc.VerificationURI, dc.UserCode)
+}
+
+// VerificationURIComplete builds the prefilled verification URL from its
+// parts (the admin snapshot stores them separately).
+func VerificationURIComplete(verificationURI, userCode string) string {
+	if verificationURI == "" || userCode == "" {
+		return verificationURI
+	}
+	raw := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		return -1
+	}, userCode)
+	sep := "?"
+	if strings.Contains(verificationURI, "?") {
+		sep = "&"
+	}
+	return verificationURI + sep + "code=" + url.QueryEscape(raw)
 }
 
 // TokenResponse is the parsed POST /v1/oauth/token payload.
