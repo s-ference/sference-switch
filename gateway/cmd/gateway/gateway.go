@@ -807,6 +807,12 @@ func (g *Gateway) refreshAuth() {
 		g.oauthClient = nil
 		fmt.Fprintf(os.Stderr, "[gateway] auth: %v\n", err)
 	}
+	// The credential changed — drop the cached /v1/auth/me identity so the
+	// next status read resolves the new user (or stays empty signed-out).
+	g.emailMu.Lock()
+	g.emailCached = ""
+	g.emailFetchedAt = time.Time{}
+	g.emailMu.Unlock()
 	fmt.Fprintf(os.Stderr, "[gateway] auth: signed_in=%t health=%s\n",
 		g.oauthClient != nil, g.authHealthLocked())
 	g.kickCatalogRefresh()

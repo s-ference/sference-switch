@@ -59,17 +59,20 @@ func (g *Gateway) authEmailAndExpiry() (string, string) {
 	email := ""
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.OAuthHost+"/v1/users/me", nil)
+	// /v1/auth/me is the inference-surface identity endpoint: it accepts
+	// the device grant's JWT (or a static key) and returns the user's
+	// email in the username field.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.OAuthHost+"/v1/auth/me", nil)
 	if err == nil {
 		if resp, err := client.Do(req); err == nil {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				var wa struct {
-					Email string `json:"email"`
+					Username string `json:"username"`
 				}
 				_ = json.Unmarshal(body, &wa)
-				email = wa.Email
+				email = wa.Username
 			}
 		}
 	}
