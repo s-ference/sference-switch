@@ -649,6 +649,78 @@ struct AdminStatusSnapshot: Equatable, Sendable {
     }
 }
 
+// MARK: - Device login
+
+/// Snapshot of the gateway-owned device-login flow (RFC 8628). The app
+/// renders the user code and opens the browser; the gateway owns the
+/// device-code request, the paced polling, and grant persistence.
+struct DeviceLoginSnapshot: Equatable, Sendable {
+    /// idle | pending | approved | failed
+    var state: String
+    var userCode: String
+    var verificationURI: String
+    /// verification_uri with ?code= appended — the console's /device page
+    /// prefills the code, so the user only clicks Approve.
+    var verificationURIComplete: String
+    var error: String
+
+    init(dict: [String: Any]) {
+        state = dict["state"] as? String ?? ""
+        userCode = dict["user_code"] as? String ?? ""
+        verificationURI = dict["verification_uri"] as? String ?? ""
+        verificationURIComplete =
+            dict["verification_uri_complete"] as? String ?? ""
+        error = dict["error"] as? String ?? ""
+    }
+}
+
+protocol DeviceLoginReading: Sendable {
+    func startDeviceLogin() async throws -> DeviceLoginSnapshot
+    func fetchDeviceLoginStatus() async throws -> DeviceLoginSnapshot
+    func cancelDeviceLogin() async throws -> DeviceLoginSnapshot
+}
+
+/// Result of POST /v1/admin/auth/logout. A refusal (env-var or
+/// shared-file credential) is 200 with ok:false and the reason in
+/// error — rendered as-is, not thrown.
+struct AuthLogoutResult: Equatable, Sendable {
+    var ok: Bool
+    var error: String
+
+    init(dict: [String: Any]) {
+        ok = dict["ok"] as? Bool ?? false
+        error = dict["error"] as? String ?? ""
+    }
+}
+
+protocol AuthSessionReading: Sendable {
+    func logout() async throws -> AuthLogoutResult
+    func fetchAuthInfo() async throws -> AuthInfoSnapshot
+}
+
+/// GET /v1/admin/auth/status — who the gateway is signed in as. The main
+/// status poller carries only signed_in/health; the account card fetches
+/// this lazily (the gateway resolves the email against the platform and
+/// caches it, so it must stay off the hot poll path).
+struct AuthInfoSnapshot: Equatable, Sendable {
+    var signedIn: Bool
+    var health: String
+    var profile: String
+    var email: String
+    /// RFC 3339 access-token expiry; "" for static keys.
+    var expiresAt: String
+    var fallbackInUse: Bool
+
+    init(dict: [String: Any]) {
+        signedIn = dict["signed_in"] as? Bool ?? false
+        health = dict["health"] as? String ?? ""
+        profile = dict["profile"] as? String ?? ""
+        email = dict["email"] as? String ?? ""
+        expiresAt = dict["expires_at"] as? String ?? ""
+        fallbackInUse = dict["fallback_in_use"] as? Bool ?? false
+    }
+}
+
 // MARK: - Injected admin API
 
 protocol AdminStatusReading: Sendable {
@@ -670,7 +742,8 @@ protocol ReasoningPreflightReading: Sendable {
 }
 
 final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
-                              ReasoningPreflightReading,
+                              ReasoningPreflightReading, DeviceLoginReading,
+                              AuthSessionReading,
                               @unchecked Sendable {
     private let runtime: RuntimeProfile
     private let session: URLSession
@@ -741,8 +814,59 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
         return snapshot
     }
 
+    func startDeviceLogin() async throws -> DeviceLoginSnapshot {
+        // The gateway proxies the device-code request to the platform
+        // synchronously, so this call needs a wider budget than the
+        // local-only admin reads (2s session default).
+        let object = try await postJSON(
+            "v1/admin/auth/device/start", body: [:], timeout: 10)
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return DeviceLoginSnapshot(dict: dict)
+    }
+
+    func fetchDeviceLoginStatus() async throws -> DeviceLoginSnapshot {
+        let object = try await getJSON("v1/admin/auth/device/status")
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return DeviceLoginSnapshot(dict: dict)
+    }
+
+    func cancelDeviceLogin() async throws -> DeviceLoginSnapshot {
+        let object = try await postJSON(
+            "v1/admin/auth/device/cancel", body: [:])
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return DeviceLoginSnapshot(dict: dict)
+    }
+
+    func logout() async throws -> AuthLogoutResult {
+        // Logout revokes against the platform before returning — same
+        // wider budget as the device start call.
+        let object = try await postJSON(
+            "v1/admin/auth/logout", body: [:], timeout: 15)
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return AuthLogoutResult(dict: dict)
+    }
+
+    func fetchAuthInfo() async throws -> AuthInfoSnapshot {
+        // The gateway may proxy a /v1/users/me lookup on a cache miss —
+        // wider budget than local-only reads.
+        let object = try await getJSON("v1/admin/auth/status", timeout: 10)
+        guard let dict = object as? [String: Any] else {
+            throw GatewayClientError.invalidPayload
+        }
+        return AuthInfoSnapshot(dict: dict)
+    }
+
     private func getJSON(_ path: String,
-                         query: [URLQueryItem] = []) async throws -> Any {
+                         query: [URLQueryItem] = [],
+                         timeout: TimeInterval? = nil) async throws -> Any {
         var url = adminBaseURL(runtime: runtime)
         url.appendPathComponent(path)
         if !query.isEmpty,
@@ -752,7 +876,11 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
                 url = queriedURL
             }
         }
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else {
             throw GatewayClientError.badResponse(
@@ -763,12 +891,16 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
 
     private func postJSON(
         _ path: String,
-        body: [String: Any]
+        body: [String: Any],
+        timeout: TimeInterval? = nil
     ) async throws -> Any {
         var request = URLRequest(
             url: adminBaseURL(runtime: runtime)
                 .appendingPathComponent(path))
         request.httpMethod = "POST"
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
         request.setValue(
             "application/json",
             forHTTPHeaderField: "Content-Type")

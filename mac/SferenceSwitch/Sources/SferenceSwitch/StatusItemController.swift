@@ -222,14 +222,37 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             added = true
         }
 
+        // Auth problems route to the overview's Account card — the
+        // device-flow code and sign-out live in the window, not the menu.
         if authNeedsReauth(auth: state.auth) {
             let item = variant.channel == .preview
                 ? disabledItem("Preview Authentication Disabled")
                 : actionItem(
                     "Authentication Required…",
-                    action: #selector(reauthenticate))
+                    action: #selector(openConfigurationWindow(_:)))
             item.image = symbol("key.fill")
-            item.isEnabled = variant.channel == .stable && !state.reauthenticating
+            item.isEnabled = variant.channel == .stable
+            menu.addItem(item)
+            added = true
+        } else if state.deviceLogin == nil,
+                  authIsSignedOut(auth: state.auth),
+                  state.auth?.fallbackInUse != true {
+            let item = variant.channel == .preview
+                ? disabledItem("Preview Authentication Disabled")
+                : actionItem(
+                    "Sign In with Sference…",
+                    action: #selector(openConfigurationWindow(_:)))
+            item.image = symbol("person.badge.key")
+            item.isEnabled = variant.channel == .stable
+            menu.addItem(item)
+            added = true
+        } else if let login = state.deviceLogin {
+            // A sign-in is in flight in the window — point at it.
+            let item = actionItem(
+                deviceLoginMenuTitle(login),
+                action: #selector(openConfigurationWindow(_:)))
+            item.image = symbol("person.badge.key")
+            item.isEnabled = !isPreview
             menu.addItem(item)
             added = true
         }
@@ -359,11 +382,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func changeProxyEnabled(_ enabled: Bool) -> Bool {
         guard !isPreview else { return false }
         return state.requestProxyEnabled(enabled)
-    }
-
-    @objc private func reauthenticate() {
-        guard !isPreview, variant.channel == .stable else { return }
-        Task { await state.reauthenticate() }
     }
 
     @objc private func startSystem() {

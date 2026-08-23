@@ -197,7 +197,7 @@ func TestRunPreflightBanner(t *testing.T) {
 				if !strings.Contains(out, tc.resolved[0].Name) {
 					t.Fatalf("banner does not name client %q:\n%s", tc.resolved[0].Name, out)
 				}
-				if !strings.Contains(out, "sference auth login") {
+				if !strings.Contains(out, "sference-switch auth login") {
 					t.Fatalf("banner does not name the fix:\n%s", out)
 				}
 			}

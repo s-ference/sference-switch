@@ -1251,7 +1251,7 @@ func TestDoctorUnresolvedAPIKeyNoOAuth(t *testing.T) {
 	if c.Status != docFail || !strings.Contains(c.Finding, "${SFERENCE_API_KEY}") {
 		t.Fatalf("signin = %+v, want fail naming ${SFERENCE_API_KEY}", c)
 	}
-	if !strings.Contains(c.Fix, "sference auth login") || !strings.Contains(c.Fix, "SFERENCE_API_KEY=") {
+	if !strings.Contains(c.Fix, "sference-switch auth login") || !strings.Contains(c.Fix, "SFERENCE_API_KEY=") {
 		t.Errorf("fix = %q, want both fix paths (login and env file)", c.Fix)
 	}
 	if rep.FirstFailure != "auth/signin" {

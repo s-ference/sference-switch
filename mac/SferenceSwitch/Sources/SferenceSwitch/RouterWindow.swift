@@ -687,6 +687,7 @@ private struct RoutingOverviewView: View {
     @ObservedObject var doorStore: DoorStatusStore
     let variant: AppVariant
     let isPreview: Bool
+    @State private var confirmSignOut = false
 
     var body: some View {
         ScrollView {
@@ -695,6 +696,8 @@ private struct RoutingOverviewView: View {
                     .font(.title2.weight(.semibold))
 
                 switchCard
+
+                accountCard
 
                 liveRequestPath
 
@@ -716,6 +719,151 @@ private struct RoutingOverviewView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .accessibilityIdentifier("routing-overview")
+        .onAppear {
+            guard !isPreview else { return }
+            state.overviewDidShow()
+        }
+        .alert(
+            "Sign Out of Sference?",
+            isPresented: $confirmSignOut
+        ) {
+            Button("Sign Out", role: .destructive) {
+                Task { await state.signOut() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The OAuth grant on this Mac will be revoked and removed. Sference routing stops until you sign in again.")
+        }
+    }
+
+    /// Sign-in/sign-out and the signed-in identity. The device-flow code
+    /// renders here (not the menu bar): the window has room for the code,
+    /// the copy action, and the approval state.
+    private var accountCard: some View {
+        RoutingSectionCard {
+            HStack {
+                Label("Account", systemImage: "person.crop.circle")
+                    .font(.headline)
+                Spacer()
+                if state.reauthenticating {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Sign-in in progress")
+                }
+            }
+        } content: {
+            VStack(alignment: .leading, spacing: 10) {
+                switch accountCardPresentation(
+                    auth: state.auth,
+                    authInfo: state.authInfo,
+                    deviceLogin: state.deviceLogin) {
+                case .signedIn(let email, let expiresAt):
+                    accountSignedInRow(email: email, expiresAt: expiresAt)
+                case .pending(let code):
+                    accountPendingRow(code: code)
+                case .signedOut:
+                    accountSignInRow(
+                        description:
+                            "Sign in to route requests through Sference with your account.")
+                case .reauthRequired:
+                    accountSignInRow(
+                        description:
+                            "The stored sign-in was rejected. Sign in again to keep routing through Sference.",
+                        warning: true)
+                case .unavailable:
+                    Text("Account status is unavailable while the gateway is down.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(6)
+        }
+        .accessibilityIdentifier("overview-account-card")
+    }
+
+    private func accountSignedInRow(email: String, expiresAt: String) -> some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(email.isEmpty ? "Signed in" : email)
+                    .font(.body.weight(.medium))
+                    .accessibilityIdentifier("overview-account-identity")
+                Text(accountSignedInCaption(email: email, expiresAt: expiresAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Button("Sign Out…") { confirmSignOut = true }
+                .disabled(isPreview || variant.channel != .stable)
+                .accessibilityIdentifier("overview-sign-out")
+        }
+    }
+
+    private func accountPendingRow(code: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Approve this sign-in in your browser:")
+                .font(.callout)
+            if code.isEmpty {
+                Text("Waiting for the sign-in code…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(code)
+                    .font(.title3.monospaced().weight(.semibold))
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("overview-device-code")
+            }
+            HStack(spacing: 10) {
+                Button("Open Browser") {
+                    state.openDeviceLoginVerificationPage()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isPreview)
+                .accessibilityIdentifier("overview-open-verification")
+                if !code.isEmpty {
+                    Button("Copy Code") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(code, forType: .string)
+                    }
+                    .accessibilityIdentifier("overview-copy-device-code")
+                }
+                Button("Cancel") {
+                    Task { await state.cancelDeviceLogin() }
+                }
+                .disabled(isPreview)
+                .accessibilityIdentifier("overview-cancel-device-login")
+            }
+            Text("The browser page has the code pre-filled — you only need to approve.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func accountSignInRow(
+        description: String,
+        warning: Bool = false
+    ) -> some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(description)
+                    .font(.callout)
+                    .foregroundStyle(warning ? .orange : .primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if variant.channel == .preview {
+                    Text("Authentication changes are disabled in Sference Switch Preview.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 12)
+            Button("Sign In with Sference…") {
+                Task { await state.beginDeviceLogin() }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isPreview || variant.channel != .stable)
+            .accessibilityIdentifier("overview-sign-in")
+        }
     }
 
     /// The master on/off switch — same control as the menu bar toggle. This
