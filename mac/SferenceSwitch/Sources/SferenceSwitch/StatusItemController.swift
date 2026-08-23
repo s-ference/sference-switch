@@ -199,20 +199,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func addWarnings() {
         var added = false
 
-        if let message = state.proxyToggleMessage {
-            let item = disabledItem(message)
-            item.image = symbol("arrow.triangle.2.circlepath")
-            menu.addItem(item)
-            added = true
-        }
-
-        // Show a sudo explanation when the switch is off and not pending,
-        // so the user knows what happens before they toggle.
-        if !state.proxyEnabled && !state.proxyPending {
+        if !state.proxyEnabled && !state.proxyPending && !state.proxyChecking {
             let item = disabledItem(
                 "Enabling the switch requires your macOS password\n" +
                 "(installs a system service and edits /etc/hosts)")
             item.image = symbol("lock.shield")
+            menu.addItem(item)
+            added = true
+        }
+
+        if let message = state.proxyToggleMessage {
+            let item = disabledItem(message)
+            item.image = symbol("arrow.triangle.2.circlepath")
             menu.addItem(item)
             added = true
         }

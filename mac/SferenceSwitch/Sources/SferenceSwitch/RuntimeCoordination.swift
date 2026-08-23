@@ -1,4 +1,3 @@
-import AppKit
 import Darwin
 import Foundation
 
@@ -337,85 +336,82 @@ actor MutationCoordinator {
     }
 }
 
-/// Runs a CLI invocation with Administrator privileges by compiling and
-/// executing an AppleScript in-process (`do shell script ... with
-/// administrator privileges`).
+/// Runs a CLI invocation with Administrator privileges via `osascript`
+/// `do shell script ... with administrator privileges`.
 ///
 /// The transparent-interception commands (`intercept on|off`,
 /// `tls service install|uninstall`) write `/etc/hosts` and install or unload a
 /// root LaunchDaemon, which a sandboxed or ordinary menubar process cannot
 /// do directly. The standard macOS behaviour is to prompt for the user's
-/// password once per invocation; running the AppleScript with `NSAppleScript`
-/// (rather than spawning `/usr/bin/osascript` as a child process) makes this
-/// app the responsible process, so the admin dialog is titled with this
-/// app's name instead of the opaque "osascript".
+/// password once per invocation; `osascript` shows that dialog synchronously.
 ///
-/// A `sudo -p` prompt string is prepended so the auth dialog itself explains
-/// what elevated access is for. The invoked script is a single admin call so
-/// the prompt authorises exactly the chained command(s).
+/// The invoked script is a single `sudo` call so the auth prompt authorises
+/// exactly that command. The command string is built from the CLI binary and
+/// arguments, quoting each argument for AppleScript.
 struct ElevatedCLIRunner: CLIRunning {
+    private let osascriptPath = "/usr/bin/osascript"
+
     func run(_ request: CLIExecutionRequest) async -> CLIExecutionResult {
-        let script = Self.appleScriptCommand(
-            binary: request.binary,
-            arguments: request.arguments)
-        return await MainActor.run {
-            Self.execute(script)
-        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: osascriptPath)
+        process.arguments = ["-e", appleScriptCommand(binary: request.binary, arguments: request.arguments)]
+        return await runProcess(process)
     }
 
-    /// The AppleScript `do shell script ... with administrator privileges`
-    /// command, single-quoting each argument and escaping the shell call.
-    private static func appleScriptCommand(binary: URL, arguments: [String]) -> String {
+    private func appleScriptCommand(binary: URL, arguments: [String]) -> String {
+        // The command that osascript runs with Administrator privileges.
         let shellCmd = [binary.path] + arguments
         let quoted = shellCmd.map { singleQuote($0) }.joined(separator: " ")
-        // `sudo -p` sets the text shown inside the admin password dialog so the
-        // user sees why elevation is requested before they type a password.
-        let prompt = "Enter your password to install the Sference service and configure routing."
-        let shell = "sudo -p \"" + escapingPrompt(prompt) + "\" " + quoted
-        return "do shell script \"" + escapedForString(shell) + "\" with administrator privileges"
+        return "do shell script \"" + escapedForString(quoted) + "\" with administrator privileges"
     }
 
-    private static func singleQuote(_ s: String) -> String {
+    private func singleQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Escapes a string that sits inside double quotes in the shell command AND
-    /// inside the outer AppleScript string.
-    private static func escapingPrompt(_ s: String) -> String {
-        s.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-    }
-
-    private static func escapedForString(_ s: String) -> String {
+    private func escapedForString(_ s: String) -> String {
         s.replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\\", with: "\\\\")
     }
 
-    private static func execute(_ script: String) -> CLIExecutionResult {
-        var error: NSDictionary?
-        guard let appleScript = NSAppleScript(source: script) else {
+    private func runProcess(_ process: Process) async -> CLIExecutionResult {
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        let stdout = BoundedProcessBuffer(limit: 32 * 1024)
+        let stderr = BoundedProcessBuffer(limit: 32 * 1024)
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            stdout.append(handle.availableData)
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            stderr.append(handle.availableData)
+        }
+        let completion = ProcessCompletion()
+        process.terminationHandler = { terminated in
+            completion.completeFromProcess(status: terminated.terminationStatus)
+        }
+        do {
+            try process.run()
+        } catch {
             return CLIExecutionResult(
-                status: 2,
+                status: -1,
                 standardOutput: "",
-                standardError: "Could not compile the privileged command script.",
+                standardError: "Unable to run elevated command: \(error.localizedDescription)",
                 timedOut: false)
         }
-        let output = appleScript.executeAndReturnError(&error)
-        if let error {
-            let code = error[NSAppleScript.errorNumber] as? Int ?? 1
-            let message = error[NSAppleScript.errorMessage] as? String
-                ?? "Unknown error."
-            return CLIExecutionResult(
-                status: Int32(code),
-                standardOutput: "",
-                standardError: redactDiagnosticText(message),
-                timedOut: false)
+        let (status, timedOut) = await withCheckedContinuation {
+            completion.install($0)
         }
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+        stdout.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
+        stderr.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
         return CLIExecutionResult(
-            status: 0,
-            standardOutput: output.stringValue ?? "",
-            standardError: "",
-            timedOut: false)
+            status: status,
+            standardOutput: stdout.string(),
+            standardError: redactDiagnosticText(stderr.string()),
+            timedOut: timedOut)
     }
 }
 

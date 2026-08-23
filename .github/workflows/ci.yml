@@ -42,7 +42,16 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: gateway/go.mod
+          # Float on the newest 1.26 patch release, not go-version-file:
+          # govulncheck must run against a stdlib with the latest security
+          # fixes (e.g. go1.26.5 -> 1.26.6), while the Nix build pins its
+          # own toolchain (GOTOOLCHAIN=local) and cannot track go.mod
+          # patch bumps.
+          go-version: '1.26'
+          # Without check-latest, setup-go restores a cached older patch
+          # (e.g. 1.26.5) and the scan flags stdlib vulns already fixed
+          # upstream.
+          check-latest: true
           cache-dependency-path: gateway/go.sum
 
       - name: Run govulncheck
