@@ -465,6 +465,12 @@ func allowlistedCLIEnvironment(
     let inherited = [
         "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR",
         "LANG", "LC_ALL",
+        // Release-source overrides shared with the Go CLI and gateway: an
+        // app launched with these set (e.g. pointed at a local release
+        // mirror) must pass them through to `upgrade` and to the gateways
+        // a restart respawns, or the update check and the download would
+        // silently diverge.
+        "SFERENCE_SWITCH_BASE_URL", "SFERENCE_SWITCH_CHANNEL",
     ]
     var result: [String: String] = ["PATH": fixedPath]
     for key in inherited {

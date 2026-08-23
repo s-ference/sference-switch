@@ -560,6 +560,7 @@ final class RuntimeCoordinationTests: XCTestCase {
                 "SFERENCE_API_KEY": "secret",
                 "ANTHROPIC_AUTH_TOKEN": "secret",
                 "SSH_AUTH_SOCK": "/tmp/attacker-agent.sock",
+                "SFERENCE_SWITCH_BASE_URL": "http://127.0.0.1:8899",
                 "UNRELATED": "not-required",
             ],
             overrides: [
@@ -576,6 +577,11 @@ final class RuntimeCoordinationTests: XCTestCase {
             environment["SFERENCE_SWITCH_CONFIG_PATH"],
             "/tmp/preview/gateway.yaml")
         XCTAssertEqual(environment["SFERENCE_SWITCH_GATEWAY_TOKEN"], "preview-token")
+        // Release-source overrides pass through so an app launched against
+        // a local mirror upgrades and restarts against the same mirror.
+        XCTAssertEqual(
+            environment["SFERENCE_SWITCH_BASE_URL"],
+            "http://127.0.0.1:8899")
         XCTAssertNil(environment["SFERENCE_API_KEY"])
         XCTAssertNil(environment["ANTHROPIC_AUTH_TOKEN"])
         XCTAssertNil(environment["UNRELATED"])
