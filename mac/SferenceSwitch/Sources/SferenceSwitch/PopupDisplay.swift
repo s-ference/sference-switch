@@ -47,6 +47,21 @@ func versionSkewNote(routerVersion: String, cliVersion: String) -> String? {
     return "Version skew: router \(routerVersion), CLI \(cliVersion)"
 }
 
+/// Update-available label: non-nil only when the gateway's release checker
+/// found a strictly newer version. The manifest version carries no "v"
+/// prefix while the router's stamped version does, so the label normalizes
+/// to the stamped form. A nil snapshot (older gateway), a failed check, and
+/// "already current" all render nothing — update info never alarms.
+func updateAvailableLabel(_ update: UpdateStatusSnapshot?) -> String? {
+    guard let update, update.available, !update.latestVersion.isEmpty else {
+        return nil
+    }
+    let latest = update.latestVersion.hasPrefix("v")
+        ? update.latestVersion
+        : "v\(update.latestVersion)"
+    return "Update available: \(latest)"
+}
+
 /// Auth line from the admin status auth block. Signed in shows the
 /// OAuth profile; fallback-in-use is appended (or shown alone when not
 /// signed in) so degraded auth is visible where the controls are.

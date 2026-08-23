@@ -139,6 +139,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(trafficMenuItem())
+        if let updateLabel = updateAvailableLabel(state.updateStatus) {
+            // Navigation only: the overview's System Status card owns the
+            // actual Update & Restart action.
+            menu.addItem(actionItem(
+                updateLabel,
+                action: #selector(openConfigurationWindow(_:))))
+        }
         menu.addItem(.separator())
         menu.addItem(actionItem(
             "Open \(variant.displayName)",

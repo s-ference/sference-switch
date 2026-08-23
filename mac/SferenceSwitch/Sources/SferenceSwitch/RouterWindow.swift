@@ -983,6 +983,23 @@ private struct RoutingOverviewView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+                if let label = updateAvailableLabel(state.updateStatus) {
+                    HStack {
+                        Label(label, systemImage: "arrow.down.circle.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color(nsColor: AppColors.sferenceGreen))
+                        Spacer()
+                        Button(state.updating ? "Updating…" : "Update & Restart") {
+                            guard !isPreview else { return }
+                            Task { await state.updateAndRestart() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(state.updating || isPreview)
+                        .accessibilityIdentifier("overview-update-restart")
+                    }
+                    .accessibilityIdentifier("overview-update-row")
+                }
             }
             .padding(6)
         }

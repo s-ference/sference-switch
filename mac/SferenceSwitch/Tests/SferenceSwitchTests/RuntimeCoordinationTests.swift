@@ -68,6 +68,19 @@ private struct FixedClock: RuntimeClock {
     }
 }
 
+private actor FailingUpgradeRunner: CLIRunning {
+    private(set) var arguments: [[String]] = []
+
+    func run(_ request: CLIExecutionRequest) async -> CLIExecutionResult {
+        arguments.append(request.arguments)
+        return CLIExecutionResult(
+            status: 1,
+            standardOutput: "",
+            standardError: "checksum mismatch",
+            timedOut: false)
+    }
+}
+
 private actor ConcurrencyRecordingRunner: CLIRunning {
     private(set) var active = 0
     private(set) var maximumActive = 0
@@ -1235,5 +1248,57 @@ final class RuntimeCoordinationTests: XCTestCase {
                 families[1],
                 globalRoutingEnabled: false),
             "Currently using Anthropic while global routing is Off")
+    }
+
+    // MARK: - Self-update
+
+    @MainActor
+    func testUpdateAndRestartRunsUpgradeWithRestart() async {
+        let runner = ConcurrencyRecordingRunner()
+        let state = SferenceSwitchState(
+            variant: previewVariant(),
+            reader: CountingAdminReader(
+                status: previewStatus(
+                    generation: 4,
+                    hash: "sha256:active",
+                    familyTarget: "zai-org/GLM-5.2")),
+            cliRunner: runner,
+            loginItemService: FakeLoginItemService(),
+            previewRuntimeValidator: { _ in nil },
+            startPolling: false)
+        await state.refresh()
+
+        await state.updateAndRestart()
+
+        let calls = await runner.arguments
+        XCTAssertTrue(calls.contains(["upgrade", "--restart"]))
+        XCTAssertNil(state.lastError)
+        XCTAssertFalse(state.updating)
+        state.stop()
+    }
+
+    @MainActor
+    func testUpdateAndRestartSurfacesFailureAndClearsUpdating() async {
+        let runner = FailingUpgradeRunner()
+        let state = SferenceSwitchState(
+            variant: previewVariant(),
+            reader: CountingAdminReader(
+                status: previewStatus(
+                    generation: 4,
+                    hash: "sha256:active",
+                    familyTarget: "zai-org/GLM-5.2")),
+            cliRunner: runner,
+            loginItemService: FakeLoginItemService(),
+            previewRuntimeValidator: { _ in nil },
+            startPolling: false)
+        await state.refresh()
+
+        await state.updateAndRestart()
+
+        let calls = await runner.arguments
+        XCTAssertEqual(calls, [["upgrade", "--restart"]])
+        XCTAssertEqual(state.lastError, "checksum mismatch")
+        XCTAssertFalse(state.updating)
+        state.stop()
     }
 }

@@ -13,7 +13,6 @@ import (
 	"archive/zip"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,46 +22,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sference/sference-switch/gateway/internal/release"
 	"github.com/sference/sference-switch/gateway/internal/version"
 )
 
-// upgradeManifest mirrors the flat manifest.json published to S3. One field
-// per line, no nested objects — the POSIX-sh installer extracts fields with
-// sed, and Go unmarshals directly.
-type upgradeManifest struct {
-	SchemaVersion int    `json:"schema_version"`
-	Product       string `json:"product"`
-	Channel       string `json:"channel"`
-	Tag           string `json:"tag"`
-	Version       string `json:"version"`
-	PublishedAt   string `json:"published_at"`
-	OS            string `json:"os"`
-	Arch          string `json:"arch"`
-	Filename      string `json:"filename"`
-	Path          string `json:"path"`
-	ChecksumsPath string `json:"checksums_path"`
-	SHA256        string `json:"sha256"`
-	Size          int64  `json:"size"`
-	Signing       string `json:"signing"`
-	Notarized     bool   `json:"notarized"`
-	MinimumMacOS  string `json:"minimum_macos"`
-}
+// upgradeManifest mirrors the flat manifest.json published to S3. The model
+// and its fetch/validate logic live in internal/release, shared with the
+// gateway's update-availability checker.
+type upgradeManifest = release.Manifest
 
 // upgradeBaseURL is a package var so tests can override it without network.
-var upgradeBaseURL = func() string {
-	if v := os.Getenv("SFERENCE_SWITCH_BASE_URL"); v != "" {
-		return strings.TrimRight(v, "/")
-	}
-	return "https://get.sference.com"
-}
+var upgradeBaseURL = release.BaseURL
 
 // upgradeChannel is a package var so tests can override it.
-var upgradeChannel = func() string {
-	if v := os.Getenv("SFERENCE_SWITCH_CHANNEL"); v != "" {
-		return v
-	}
-	return "stable"
-}
+var upgradeChannel = release.Channel
 
 // upgradeHTTPClient is a package var so tests can inject a fake.
 var upgradeHTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -126,7 +99,7 @@ func cmdUpgrade(args []string) int {
 	fmt.Printf("current:  %s\n", current)
 	fmt.Printf("available: %s\n", manifest.Version)
 
-	cmp := compareSemver(current, manifest.Version)
+	cmp := release.CompareSemver(current, manifest.Version)
 	if current == "dev" && !force {
 		fmt.Fprintln(os.Stderr, "development build; pass --force to replace it")
 		return 1
@@ -199,51 +172,7 @@ func cmdUpgrade(args []string) int {
 
 // fetchUpgradeManifest downloads and validates the latest.json manifest.
 func fetchUpgradeManifest() (*upgradeManifest, error) {
-	url := upgradeBaseURL() + "/sference-switch/" + upgradeChannel() + "/latest.json"
-	resp, err := upgradeHTTPClient.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("fetch manifest: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("fetch manifest: HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read manifest: %v", err)
-	}
-	var m upgradeManifest
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, fmt.Errorf("parse manifest: %v", err)
-	}
-	if m.SchemaVersion != 1 {
-		return nil, fmt.Errorf("unsupported manifest schema_version: %d", m.SchemaVersion)
-	}
-	if m.Product != "sference-switch" {
-		return nil, fmt.Errorf("manifest product is %q, want sference-switch", m.Product)
-	}
-	if m.OS != "darwin" {
-		return nil, fmt.Errorf("manifest os is %q, want darwin", m.OS)
-	}
-	if m.Arch != "universal" {
-		return nil, fmt.Errorf("manifest arch is %q, want universal", m.Arch)
-	}
-	if !isHex64(m.SHA256) {
-		return nil, fmt.Errorf("manifest sha256 is not 64 lowercase hex")
-	}
-	if strings.Contains(m.Path, "..") || strings.HasPrefix(m.Path, "/") {
-		return nil, fmt.Errorf("manifest path is unsafe: %q", m.Path)
-	}
-	if !strings.HasPrefix(m.Path, "sference-switch/") {
-		return nil, fmt.Errorf("manifest path must start with sference-switch/")
-	}
-	if strings.Contains(m.ChecksumsPath, "..") || strings.HasPrefix(m.ChecksumsPath, "/") {
-		return nil, fmt.Errorf("manifest checksums_path is unsafe: %q", m.ChecksumsPath)
-	}
-	if !strings.HasPrefix(m.ChecksumsPath, "sference-switch/") {
-		return nil, fmt.Errorf("manifest checksums_path must start with sference-switch/")
-	}
-	return &m, nil
+	return release.FetchManifest(upgradeHTTPClient, upgradeBaseURL(), upgradeChannel())
 }
 
 // downloadAndVerify streams the ZIP to disk while hashing it.
@@ -439,45 +368,3 @@ func upgradeAppBundle(tmpDir string) error {
 	return nil
 }
 
-// compareSemver compares two semver strings. Returns -1, 0, or 1.
-// "dev" compares as less than everything.
-func compareSemver(a, b string) int {
-	if a == "dev" {
-		return -1
-	}
-	if b == "dev" {
-		return 1
-	}
-	a = strings.TrimPrefix(a, "v")
-	b = strings.TrimPrefix(b, "v")
-	aParts := strings.Split(a, ".")
-	bParts := strings.Split(b, ".")
-	for i := 0; i < 3; i++ {
-		var av, bv int
-		if i < len(aParts) {
-			av, _ = strconv.Atoi(aParts[i])
-		}
-		if i < len(bParts) {
-			bv, _ = strconv.Atoi(bParts[i])
-		}
-		if av != bv {
-			if av < bv {
-				return -1
-			}
-			return 1
-		}
-	}
-	return 0
-}
-
-func isHex64(s string) bool {
-	if len(s) != 64 {
-		return false
-	}
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			return false
-		}
-	}
-	return true
-}
