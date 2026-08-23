@@ -367,4 +367,3 @@ func upgradeAppBundle(tmpDir string) error {
 	fmt.Printf("App updated: %s\n", dst)
 	return nil
 }
-
