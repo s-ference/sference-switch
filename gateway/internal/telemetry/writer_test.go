@@ -234,6 +234,71 @@ func TestWriterRotatesWhenEventUTCMonthChanges(t *testing.T) {
 	}
 }
 
+// The regression this fixes: age expiry works in whole calendar months, so
+// a single busy month grows unbounded until it ages out. A store larger
+// than the analytics index bootstrap budget silently truncates request
+// history and the UI reports "partial request history: bootstrap byte cap"
+// with no action available to the user.
+func TestWriterSizeRetentionBoundsASingleMonth(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
+	// Four closed same-month segments, all far newer than the age cutoff:
+	// time-based retention cannot remove any of them.
+	for _, name := range []string{
+		"requests-2026-08-001.jsonl",
+		"requests-2026-08-002.jsonl",
+		"requests-2026-08-003.jsonl",
+		"requests-2026-08-004.jsonl",
+	} {
+		writeSizedSegment(t, dir, name, 1000)
+	}
+
+	writer, err := NewWriter(WriterOptions{
+		Dir:           dir,
+		MaxTotalBytes: 2500,
+		Now:           func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	segments, err := DiscoverSegments(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	for _, segment := range segments {
+		total += segment.Size
+	}
+	if total > 2500 {
+		t.Fatalf("retained %d bytes after retention, want <= 2500", total)
+	}
+	if writer.Health().LastRetentionError != "" {
+		t.Fatalf("retention error = %q", writer.Health().LastRetentionError)
+	}
+}
+
+func TestWriterSizeRetentionDefaultIsBelowIndexBootstrapBudget(t *testing.T) {
+	dir := t.TempDir()
+	writer, err := NewWriter(WriterOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	if got := writer.Health().MaxTotalBytes; got != DefaultMaxTotalBytes {
+		t.Fatalf("MaxTotalBytes = %d, want %d", got, DefaultMaxTotalBytes)
+	}
+	// Everything retained on disk must be loadable by the reader, or the
+	// UI reports partial history for data the writer deliberately kept.
+	const indexBootstrapBudget = int64(128 << 20)
+	if DefaultMaxTotalBytes >= indexBootstrapBudget {
+		t.Fatalf("DefaultMaxTotalBytes %d must stay below the index bootstrap budget %d",
+			DefaultMaxTotalBytes, indexBootstrapBudget)
+	}
+}
+
 func TestWriterRecoversInvalidFinalSuffix(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "requests-2026-07-001.jsonl")

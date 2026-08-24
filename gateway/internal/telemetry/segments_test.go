@@ -113,6 +113,120 @@ func TestDeleteExpiredSegmentsUsesMonthBoundaryWithoutReadingRows(t *testing.T) 
 	assertFileExistence(t, filepath.Join(dir, "requests-2026-07-001.jsonl"), true)
 }
 
+// writeSizedSegment writes a segment of exactly size bytes.
+func writeSizedSegment(t *testing.T, dir, name string, size int) {
+	t.Helper()
+	contents := make([]byte, size)
+	for i := range contents {
+		contents[i] = 'x'
+	}
+	if size > 0 {
+		contents[size-1] = '\n'
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, name), contents, 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteSegmentsOverBudgetRemovesOldestFirst(t *testing.T) {
+	dir := t.TempDir()
+	// 4 x 1000 bytes = 4000 total, budget 2500 -> the two oldest go.
+	for _, name := range []string{
+		"requests-2026-01-001.jsonl",
+		"requests-2026-01-002.jsonl",
+		"requests-2026-02-001.jsonl",
+		"requests-2026-02-002.jsonl",
+	} {
+		writeSizedSegment(t, dir, name, 1000)
+	}
+
+	if err := DeleteSegmentsOverBudget(
+		dir, "requests-2026-02-002.jsonl", 2500,
+	); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExistence(t, filepath.Join(dir, "requests-2026-01-001.jsonl"), false)
+	assertFileExistence(t, filepath.Join(dir, "requests-2026-01-002.jsonl"), false)
+	assertFileExistence(t, filepath.Join(dir, "requests-2026-02-001.jsonl"), true)
+	assertFileExistence(t, filepath.Join(dir, "requests-2026-02-002.jsonl"), true)
+}
+
+func TestDeleteSegmentsOverBudgetKeepsStoreWithinBudget(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{
+		"requests-2026-01-001.jsonl",
+		"requests-2026-02-001.jsonl",
+		"requests-2026-03-001.jsonl",
+	} {
+		writeSizedSegment(t, dir, name, 1000)
+	}
+
+	if err := DeleteSegmentsOverBudget(
+		dir, "requests-2026-03-001.jsonl", 1500,
+	); err != nil {
+		t.Fatal(err)
+	}
+	segments, err := DiscoverSegments(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	for _, segment := range segments {
+		total += segment.Size
+	}
+	if total > 1500 {
+		t.Fatalf("retained %d bytes, want <= 1500", total)
+	}
+}
+
+// The active segment is never deleted, even when it alone exceeds the
+// budget: deleting the file the writer holds open would strand writes.
+func TestDeleteSegmentsOverBudgetNeverDeletesActiveSegment(t *testing.T) {
+	dir := t.TempDir()
+	writeSizedSegment(t, dir, "requests-2026-01-001.jsonl", 1000)
+	writeSizedSegment(t, dir, "requests-2026-02-001.jsonl", 5000)
+
+	if err := DeleteSegmentsOverBudget(
+		dir, "requests-2026-02-001.jsonl", 100,
+	); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExistence(t, filepath.Join(dir, "requests-2026-01-001.jsonl"), false)
+	assertFileExistence(t, filepath.Join(dir, "requests-2026-02-001.jsonl"), true)
+}
+
+func TestDeleteSegmentsOverBudgetDisabledAndUnderBudget(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		budget int64
+	}{
+		// Both non-positive values disable deletion in this function.
+		// NewWriter maps a zero option to DefaultMaxTotalBytes before it
+		// ever reaches here; only a negative value opts out end to end.
+		{name: "negative disables", budget: -1},
+		{name: "zero disables", budget: 0},
+		{name: "under budget", budget: 10_000},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeSizedSegment(t, dir, "requests-2026-01-001.jsonl", 1000)
+			writeSizedSegment(t, dir, "requests-2026-02-001.jsonl", 1000)
+
+			if err := DeleteSegmentsOverBudget(
+				dir, "requests-2026-02-001.jsonl", test.budget,
+			); err != nil {
+				t.Fatal(err)
+			}
+			assertFileExistence(
+				t, filepath.Join(dir, "requests-2026-01-001.jsonl"), true)
+			assertFileExistence(
+				t, filepath.Join(dir, "requests-2026-02-001.jsonl"), true)
+		})
+	}
+}
+
 func TestSegmentMonthEndsByUTCBoundary(t *testing.T) {
 	segment := Segment{Year: 2026, Month: time.March}
 	for _, test := range []struct {
