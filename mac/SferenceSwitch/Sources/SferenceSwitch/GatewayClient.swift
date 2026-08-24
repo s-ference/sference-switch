@@ -41,6 +41,7 @@ struct RoutingSnapshot: Equatable, Sendable {
     let reload: ReloadStatus
     let auth: AuthStatus?
     let clients: [ClientStatus]
+    let update: UpdateStatusSnapshot?
 
     var supportsGlobalRouting: Bool {
         capabilities.contains("global_routing")
@@ -68,6 +69,7 @@ struct RoutingSnapshot: Equatable, Sendable {
         reload = status.reload
         auth = status.auth
         clients = status.clients
+        update = status.update
     }
 
     init(observedAt: Date,
@@ -76,7 +78,8 @@ struct RoutingSnapshot: Equatable, Sendable {
          globalRoutingEnabled: Bool,
          pickerInjectEnabled: Bool = true,
          auth: AuthStatus?,
-         clients: [ClientStatus]) {
+         clients: [ClientStatus],
+         update: UpdateStatusSnapshot? = nil) {
         token = RoutingToken(routerBootID: "", activeGeneration: 0)
         activeConfigHash = ""
         desiredConfigHash = ""
@@ -92,6 +95,7 @@ struct RoutingSnapshot: Equatable, Sendable {
         reload = ReloadStatus(state: "", error: "")
         self.auth = auth
         self.clients = clients
+        self.update = update
     }
 }
 
@@ -624,6 +628,7 @@ struct AdminStatusSnapshot: Equatable, Sendable {
     var pickerInjectEnabled: Bool
     var auth: AuthStatus?
     var clients: [ClientStatus]
+    var update: UpdateStatusSnapshot?
 
     init(dict: [String: Any]) {
         let generationNumber = dict["active_generation"] as? NSNumber
@@ -643,9 +648,38 @@ struct AdminStatusSnapshot: Equatable, Sendable {
         auth = (dict["auth"] as? [String: Any]).map(AuthStatus.init)
         let array = dict["clients"] as? [[String: Any]] ?? []
         clients = array.compactMap(ClientStatus.init)
+        update = (dict["update"] as? [String: Any])
+            .flatMap(UpdateStatusSnapshot.init)
 
         globalRoutingEnabled = dict["global_routing_enabled"] as? Bool ?? false
         pickerInjectEnabled = dict["picker_inject_enabled"] as? Bool ?? true
+    }
+}
+
+/// Update-availability outcome cached by the gateway's background release
+/// checker. Nil when the gateway predates the field; a never-checked or
+/// dev-build gateway reports available=false with empty versions, which the
+/// UI renders as no update row.
+struct UpdateStatusSnapshot: Equatable, Sendable {
+    var available: Bool
+    var latestVersion: String
+    var currentVersion: String
+    var checkedAt: String
+
+    init(available: Bool, latestVersion: String,
+         currentVersion: String, checkedAt: String) {
+        self.available = available
+        self.latestVersion = latestVersion
+        self.currentVersion = currentVersion
+        self.checkedAt = checkedAt
+    }
+
+    init?(dict: [String: Any]) {
+        guard let available = dict["available"] as? Bool else { return nil }
+        self.available = available
+        latestVersion = dict["latest_version"] as? String ?? ""
+        currentVersion = dict["current_version"] as? String ?? ""
+        checkedAt = dict["checked_at"] as? String ?? ""
     }
 }
 

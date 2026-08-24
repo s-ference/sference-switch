@@ -45,6 +45,66 @@ final class PopupDisplayTests: XCTestCase {
             "Version skew: router v0.2.0, CLI v0.2.1")
     }
 
+    func testUpdateStatusSnapshotParses() {
+        let snapshot = UpdateStatusSnapshot(dict: [
+            "available": true,
+            "latest_version": "0.2.0",
+            "current_version": "0.1.0",
+            "checked_at": "2026-08-23T06:00:00Z",
+        ])
+        XCTAssertEqual(
+            snapshot,
+            UpdateStatusSnapshot(
+                available: true,
+                latestVersion: "0.2.0",
+                currentVersion: "0.1.0",
+                checkedAt: "2026-08-23T06:00:00Z"))
+        // A missing "available" key is not a usable payload.
+        XCTAssertNil(UpdateStatusSnapshot(dict: ["latest_version": "0.2.0"]))
+    }
+
+    func testUpdateStatusRidesAdminStatusIntoRoutingSnapshot() {
+        let status = AdminStatusSnapshot(dict: [
+            "health": "ready",
+            "version": "v0.1.0",
+            "update": [
+                "available": true,
+                "latest_version": "0.2.0",
+                "current_version": "0.1.0",
+                "checked_at": "2026-08-23T06:00:00Z",
+            ],
+        ])
+        let routing = RoutingSnapshot(status: status, observedAt: Date())
+        XCTAssertEqual(routing.update?.latestVersion, "0.2.0")
+        XCTAssertTrue(routing.update?.available ?? false)
+        // A gateway predating the field: no snapshot, no UI.
+        let legacy = AdminStatusSnapshot(dict: ["health": "ready"])
+        XCTAssertNil(RoutingSnapshot(status: legacy, observedAt: Date()).update)
+    }
+
+    func testUpdateAvailableLabel() {
+        // Available: label names the new version, normalized to the
+        // stamped "v" form.
+        XCTAssertEqual(
+            updateAvailableLabel(UpdateStatusSnapshot(
+                available: true, latestVersion: "0.2.0",
+                currentVersion: "0.1.0", checkedAt: "")),
+            "Update available: v0.2.0")
+        XCTAssertEqual(
+            updateAvailableLabel(UpdateStatusSnapshot(
+                available: true, latestVersion: "v0.2.0",
+                currentVersion: "0.1.0", checkedAt: "")),
+            "Update available: v0.2.0")
+        // Not available, empty version, and no snapshot all render nothing.
+        XCTAssertNil(updateAvailableLabel(UpdateStatusSnapshot(
+            available: false, latestVersion: "0.2.0",
+            currentVersion: "0.2.0", checkedAt: "")))
+        XCTAssertNil(updateAvailableLabel(UpdateStatusSnapshot(
+            available: true, latestVersion: "",
+            currentVersion: "0.1.0", checkedAt: "")))
+        XCTAssertNil(updateAvailableLabel(nil))
+    }
+
     private func auth(signedIn: Bool, profile: String,
                       fallbackInUse: Bool, health: String = "",
                       lastError: String = "") -> AuthStatus {

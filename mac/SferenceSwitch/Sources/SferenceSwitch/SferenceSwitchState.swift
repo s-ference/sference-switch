@@ -66,6 +66,7 @@ final class SferenceSwitchState: ObservableObject {
     @Published private(set) var liveModelCatalogState:
         LiveModelCatalogLoadState = .idle
     @Published private(set) var starting = false
+    @Published private(set) var updating = false
     @Published var lastError: String?
     @Published private(set) var loginItemStatus: SMAppService.Status = .notRegistered
     @Published private(set) var stats: StatsSnapshot?
@@ -131,6 +132,9 @@ final class SferenceSwitchState: ObservableObject {
     }
     var routerVersion: String { routingSnapshot?.version ?? "" }
     var auth: AuthStatus? { routingSnapshot?.auth }
+    /// Cached release-check outcome from the gateway; rides the regular
+    /// status poll, so no separate fetch exists to fail or stale.
+    var updateStatus: UpdateStatusSnapshot? { routingSnapshot?.update }
     var activeConfigPath: String { routingSnapshot?.configPath ?? "" }
     var confirmedGlobalRoutingEnabled: Bool {
         routingSnapshot?.globalRoutingEnabled ?? false
@@ -1376,6 +1380,29 @@ final class SferenceSwitchState: ObservableObject {
     var canStartSystem: Bool {
         mutationAllowed(allowWhenPreviewDown: true)
             && Self.locateSferenceSwitchBinary(variant: variant) != nil
+    }
+
+    // MARK: - Self-update
+
+    /// Runs `sference-switch upgrade --restart`. The CLI downloads and
+    /// verifies the new release, swaps the binary and this app bundle, then
+    /// restarts services — which quits and relaunches this process, so a
+    /// successful run may never return to the awaiting caller. Only a
+    /// failure surfaces here.
+    func updateAndRestart() async {
+        guard !updating else { return }
+        updating = true
+        defer { updating = false }
+        let result = await executeCLI(["upgrade", "--restart"], timeout: 300)
+        guard !result.succeeded else { return }
+        lastError = result.timedOut
+            ? "The update timed out. Run 'sference-switch upgrade' in a terminal to retry."
+            : menuErrorLabel(
+                redactDiagnosticText(
+                    result.standardError.isEmpty
+                        ? "The update failed."
+                        : result.standardError),
+                limit: 180)
     }
 
     func toggleStartAtLogin() {

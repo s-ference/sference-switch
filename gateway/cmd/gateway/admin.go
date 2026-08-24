@@ -578,6 +578,7 @@ func (g *Gateway) adminStatus(w http.ResponseWriter, r *http.Request) {
 		"picker_inject_enabled":  pickerInjectEnabled,
 		"uptime_seconds":         g.uptimeSeconds(),
 		"version":                version.Version,
+		"update":                 g.updateStatusJSON(),
 		// Mutation clients must target the exact file this process has
 		// loaded. Ambient CLI sticky state can point at an older scratch
 		// config even while this router is healthy.

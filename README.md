@@ -14,45 +14,26 @@ The first public release supports macOS 13 or newer on Apple Silicon and Intel.
 
 ## Quick start
 
-Sference Switch intercepts Claude Code transparently — no
-`ANTHROPIC_BASE_URL`, no env vars, no changes to Claude Code. It works by:
+```sh
+curl -fsSL https://get.sference.com | sh
+```
 
-1. adding an `/etc/hosts` entry that points `api.anthropic.com` at `127.0.0.1`;
-2. running a TLS-terminating door on loopback port 443 that presents a
-   locally-trusted certificate for `api.anthropic.com`;
-3. routing inference requests to Sference while passing every control-plane
-   request (OAuth, feature flags, telemetry, bootstrap) through to the real
-   Anthropic API unmodified.
+This downloads the latest release, verifies the checksum, and installs the CLI
+to `~/.local/bin` and the menubar app to `~/Applications`. No Homebrew required.
+
+Then set up and start:
 
 ```sh
-brew install sference/sference/sference-switch
 sference-switch setup
-sference-switch tls setup                 # mint the local cert
-sudo sference-switch tls install          # trust the CA in the System keychain
-sudo sference-switch tls service install  # run the :443 door as a root daemon
-sudo sference-switch intercept on         # point api.anthropic.com at 127.0.0.1
-sference-switch up                        # start the router + plain door
+sference-switch tls setup
+sudo sference-switch tls install
+sudo sference-switch tls service install
+sudo sference-switch intercept on
+sference-switch up
 sference-switch doctor --probe
 ```
 
-The fully qualified Homebrew command adds Sference's public tap and installs
-both Sference Switch and its Sference CLI dependency. It requires no GitHub
-login, separate `brew tap`, second install command, or local compiler. The beta
-release includes a universal macOS artifact for Apple Silicon and Intel.
-
-`setup` verifies that an API key is configured (from `~/.sference/credentials.json`
-or `SFERENCE_API_KEY`), and creates the initial configuration. It never
-overwrites an existing configuration. `tls setup` mints a local CA and a leaf
-certificate for `api.anthropic.com`; `tls install` trusts the CA in the System
-keychain. `tls service install` installs the root LaunchDaemon that keeps the
-443 door alive across reboots. `intercept on` flips `/etc/hosts`, after which
-new Claude Code sessions route through the door with zero configuration
-changes. `doctor --probe` checks the complete request path with a small live
-request.
-
-> **Permissions:** `tls install`, `tls service install`, and `intercept on`
-> require `sudo` because they modify the System keychain, install a launch
-> daemon, and edit `/etc/hosts`. These are one-time setup steps.
+Homebrew is also available: `brew install sference/sference/sference-switch`.
 
 ## Authentication
 
