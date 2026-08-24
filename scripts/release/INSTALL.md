@@ -4,21 +4,26 @@
 > ad-hoc signed but are not Apple-notarized. macOS may require explicit
 > approval before the app opens for the first time.
 
-Homebrew is the canonical public install and upgrade channel. This one
-command installs the Sference CLI and Sference Switch from Sference's public tap:
+The one-line installer downloads the latest release, verifies the checksum,
+and installs the CLI and menubar app:
 
 ```sh
-brew install sference/sference/sference-switch
+curl -fsSL https://get.sference.com | sh
 ```
 
-Then authenticate and start the gateway:
+Then set up and start:
 
 ```sh
 sference-switch setup
-sference-switch up --install
-sference-switch claude on
+sference-switch tls setup
+sudo sference-switch tls install
+sudo sference-switch tls service install
+sudo sference-switch intercept on
+sference-switch up
 sference-switch doctor --probe
 ```
+
+Homebrew is also available: `brew install sference/sference/sference-switch`.
 
 ## Direct release asset
 

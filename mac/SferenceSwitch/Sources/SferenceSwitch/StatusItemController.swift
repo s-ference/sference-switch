@@ -118,6 +118,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(headerItem)
         menu.addItem(.separator())
 
+        addUpdateItems()
+
         addWarnings()
 
         if state.routingSnapshot != nil {
@@ -194,6 +196,26 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             accessibilityStatus: toggle.accessibilityStatus,
             switchEnabled: toggle.isEnabled,
             disabledReason: toggle.disabledReason)
+    }
+
+    /// Update-available message + action, directly under the header so it
+    /// is the first thing in the menu. The message line names the version;
+    /// the action below it runs the upgrade in place, so a user who only
+    /// ever opens the menu never has to find the overview to update.
+    private func addUpdateItems() {
+        guard let updateLabel = updateAvailableLabel(state.updateStatus) else {
+            return
+        }
+        let message = disabledItem(updateLabel)
+        message.image = symbol("arrow.down.circle.fill")
+        menu.addItem(message)
+
+        let action = actionItem(
+            state.updating ? "Updating…" : "Update & Restart",
+            action: #selector(updateAndRestart))
+        action.isEnabled = !state.updating && variant.channel == .stable
+        menu.addItem(action)
+        menu.addItem(.separator())
     }
 
     private func addWarnings() {
@@ -374,6 +396,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func openConfigurationWindow(_ sender: NSMenuItem) {
         guard !isPreview else { return }
         openConfiguration(sender.representedObject as? String)
+    }
+
+    @objc private func updateAndRestart() {
+        guard !isPreview else { return }
+        Task { await state.updateAndRestart() }
     }
 
     @objc private func openNativeTraffic() {

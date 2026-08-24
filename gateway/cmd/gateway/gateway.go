@@ -530,6 +530,12 @@ type Gateway struct {
 	fallbackMu    sync.Mutex
 	fallbackUntil map[string]time.Time
 
+	// Update-availability cache, written by the background checker in
+	// update_check.go and served read-only by /v1/admin/status.
+	updateMu           sync.Mutex
+	update             updateStatus
+	updateCheckStarted atomic.Bool
+
 	// Active routing snapshot. Admin status reads this exact accepted
 	// configuration instead of independently parsing gateway.yaml.
 	stateMu          sync.RWMutex
@@ -4238,6 +4244,7 @@ func Run(cfg Config) error {
 	// free for embedders and tests that provide synthetic upstream handlers.
 	g.startCatalogRefresh(ctx)
 	g.startPublicCatalogRefresh(ctx)
+	g.startUpdateCheck(ctx)
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() {

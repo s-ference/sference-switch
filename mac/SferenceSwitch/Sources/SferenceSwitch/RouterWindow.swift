@@ -694,6 +694,11 @@ private struct RoutingOverviewView: View {
                 Label("Overview", systemImage: "switch.2")
                     .font(.title2.weight(.semibold))
 
+                // An available update leads the page: it is the one item
+                // here that expires, and burying it under the status card
+                // meant scrolling past everything else to find it.
+                updateBanner
+
                 switchCard
 
                 liveRequestPath
@@ -985,6 +990,36 @@ private struct RoutingOverviewView: View {
                 }
             }
             .padding(6)
+        }
+    }
+
+    /// Update-available banner. Rendered at the top of the overview rather
+    /// than inside System Status: it is an action the user takes, not a
+    /// state they read, and it disappears once taken.
+    @ViewBuilder
+    private var updateBanner: some View {
+        if let label = updateAvailableLabel(state.updateStatus) {
+            let accent = Color(nsColor: AppColors.sferenceGreen)
+            HStack(spacing: 12) {
+                Label(label, systemImage: "arrow.down.circle.fill")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(accent)
+                Spacer()
+                Button(state.updating ? "Updating…" : "Update & Restart") {
+                    guard !isPreview else { return }
+                    Task { await state.updateAndRestart() }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .disabled(state.updating || isPreview)
+                .accessibilityIdentifier("overview-update-restart")
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                accent.opacity(0.09),
+                in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityIdentifier("overview-update-row")
         }
     }
 
