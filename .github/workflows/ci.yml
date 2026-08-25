@@ -98,3 +98,9 @@ jobs:
 
       - name: Run the hermetic repository gate
         run: scripts/check.sh --offline
+
+      # Executes get.sh against a local TLS mirror. sh -n cannot catch a
+      # validator that parses but never matches, which is how a broken
+      # sha256 check shipped in v0.1.0 and blocked every install.
+      - name: Verify the curl installer against a local mirror
+        run: scripts/release/test-get-installer.sh

@@ -94,6 +94,7 @@ jobs:
         run: |
           scripts/release/test-release-workflow.sh
           scripts/release/test-render-formula.sh
+          scripts/release/test-get-installer.sh
 
       - name: Build ad-hoc signed beta release assets
         env:

@@ -154,7 +154,10 @@ EOF
         || fail "manifest checksums_path must start with sference-switch/"
 
     if [ -n "$sha256" ]; then
-        printf '%s' "$sha256" | grep -Eq '^[0-9a-f]\{64\}$' \
+        # ERE, so the repetition braces are unescaped. With -E a '\{64\}'
+        # matches literal braces, which no digest ever contains, so every
+        # valid manifest was rejected.
+        printf '%s' "$sha256" | grep -Eq '^[0-9a-f]{64}$' \
             || fail "manifest sha256 is not 64 lowercase hex: $sha256"
     fi
 
