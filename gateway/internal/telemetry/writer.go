@@ -16,6 +16,16 @@ import (
 const (
 	DefaultMaxSegmentBytes int64 = 32 << 20
 	DefaultRetentionDays         = 90
+
+	// DefaultMaxTotalBytes bounds the whole telemetry store, not just one
+	// segment. It is deliberately below the analytics index bootstrap
+	// budget (analytics.DefaultBootstrapMaxBytes, 128 MiB): the index
+	// stops reading at its budget and then reports partial history, so a
+	// store allowed to grow past it truncates the UI's request history
+	// with nothing the user can do about it. Keeping the store smaller
+	// than the reader's budget means everything retained is loadable.
+	DefaultMaxTotalBytes int64 = 96 << 20
+
 	writerLockName               = ".writer.lock"
 	recoveryReadChunkBytes int64 = 64 << 10
 )
@@ -31,7 +41,10 @@ type WriterOptions struct {
 	Dir             string
 	RetentionDays   int
 	MaxSegmentBytes int64
-	Now             func() time.Time
+	// MaxTotalBytes bounds the whole store; zero selects
+	// DefaultMaxTotalBytes and a negative value disables size retention.
+	MaxTotalBytes int64
+	Now           func() time.Time
 }
 
 type WriterHealth struct {
@@ -41,6 +54,7 @@ type WriterHealth struct {
 	DroppedEvents         uint64
 	RecoveredPartialLines uint64
 	RetentionDays         int
+	MaxTotalBytes         int64
 	LastRetentionError    string
 }
 
@@ -51,6 +65,7 @@ type Writer struct {
 	dir             string
 	retentionDays   int
 	maxSegmentBytes int64
+	maxTotalBytes   int64
 	now             func() time.Time
 
 	lockFile *os.File
@@ -74,6 +89,11 @@ func NewWriter(options WriterOptions) (*Writer, error) {
 	if options.MaxSegmentBytes <= 0 {
 		options.MaxSegmentBytes = DefaultMaxSegmentBytes
 	}
+	// Zero means "unset, use the default"; negative is an explicit opt-out
+	// that DeleteSegmentsOverBudget treats as disabled.
+	if options.MaxTotalBytes == 0 {
+		options.MaxTotalBytes = DefaultMaxTotalBytes
+	}
 	if options.Now == nil {
 		options.Now = time.Now
 	}
@@ -88,10 +108,12 @@ func NewWriter(options WriterOptions) (*Writer, error) {
 		dir:             options.Dir,
 		retentionDays:   options.RetentionDays,
 		maxSegmentBytes: options.MaxSegmentBytes,
+		maxTotalBytes:   options.MaxTotalBytes,
 		now:             options.Now,
 		lockFile:        lockFile,
 	}
 	writer.health.RetentionDays = options.RetentionDays
+	writer.health.MaxTotalBytes = options.MaxTotalBytes
 	if err := writer.openLatestSegmentLocked(); err != nil {
 		_ = writer.releaseLock()
 		return nil, err
@@ -394,11 +416,22 @@ func (w *Writer) createSegmentLocked(month time.Time) error {
 	return nil
 }
 
+// runRetentionLocked applies both retention bounds: age first, then total
+// size. Age expiry is the cheaper pass and shrinks the set the size pass has
+// to consider; running size first would delete segments that the age pass
+// was about to remove anyway.
+//
+// Size retention is not optional cleanup. Age expiry works in whole calendar
+// months, so a single busy month is unbounded until it ages out, and the
+// analytics index — which bootstraps from a fixed byte budget — silently
+// serves partial request history once the store outgrows it.
 func (w *Writer) runRetentionLocked(now time.Time) {
 	w.lastRetentionDay = utcDay(now)
 	cutoff := now.UTC().Add(-time.Duration(w.retentionDays) * 24 * time.Hour)
-	err := DeleteExpiredSegments(w.dir, w.health.ActiveSegment, cutoff)
-	if err != nil {
+	ageErr := DeleteExpiredSegments(w.dir, w.health.ActiveSegment, cutoff)
+	sizeErr := DeleteSegmentsOverBudget(
+		w.dir, w.health.ActiveSegment, w.maxTotalBytes)
+	if err := errors.Join(ageErr, sizeErr); err != nil {
 		w.health.LastRetentionError = err.Error()
 		return
 	}

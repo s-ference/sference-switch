@@ -138,6 +138,53 @@ func DeleteExpiredSegments(dir, activeName string, cutoff time.Time) error {
 	return errors.Join(deleteErrors...)
 }
 
+// DeleteSegmentsOverBudget removes oldest-first until the retained segments
+// fit within maxTotalBytes. The active segment is never deleted and always
+// counts against the budget, so a store whose active segment alone exceeds
+// the budget deletes everything else and then stops rather than looping.
+//
+// This is the size half of retention. Time-based expiry alone cannot bound
+// the store: segments are deleted only once their whole calendar month is
+// older than the cutoff, so a single busy month grows without limit until
+// it ages out. The analytics index bootstraps from a byte budget, and a
+// store larger than that budget silently truncates request history with no
+// action available to the user.
+//
+// A non-positive budget disables size-based deletion.
+func DeleteSegmentsOverBudget(dir, activeName string, maxTotalBytes int64) error {
+	if maxTotalBytes <= 0 {
+		return nil
+	}
+	segments, err := DiscoverSegments(dir)
+	if err != nil {
+		return err
+	}
+
+	var total int64
+	for _, segment := range segments {
+		total += segment.Size
+	}
+
+	var deleteErrors []error
+	// DiscoverSegments returns lexical order, which for the zero-padded
+	// requests-YYYY-MM-NNN naming is chronological: oldest goes first.
+	for _, segment := range segments {
+		if total <= maxTotalBytes {
+			break
+		}
+		if segment.Name == activeName {
+			continue
+		}
+		if err := os.Remove(segment.Path); err != nil {
+			deleteErrors = append(deleteErrors,
+				fmt.Errorf("delete oversized telemetry segment %s: %w", segment.Name, err))
+			continue
+		}
+		total -= segment.Size
+	}
+	return errors.Join(deleteErrors...)
+}
+
 func segmentMonthEndsBy(segment Segment, cutoff time.Time) bool {
 	monthEnd := time.Date(
 		segment.Year,
