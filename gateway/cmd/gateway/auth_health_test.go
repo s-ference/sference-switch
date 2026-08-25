@@ -155,3 +155,103 @@ func TestAuthDeadCredentialEngagesFallbackRoute(t *testing.T) {
 	}
 	_ = time.Now // keep time import
 }
+
+// TestAuthHealthRefreshFailedOnRevokedGrant verifies that when the stored
+// device grant is terminally rejected (invalid_grant — revoked/expired/
+// reuse-detected), the first request through the oauth client flips auth
+// health to "refresh_failed" and records the error for the app to render
+// as "reauthentication required".
+func TestAuthHealthRefreshFailedOnRevokedGrant(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer upstream.Close()
+	// The token endpoint rejects the refresh as a dead grant.
+	oauthSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"This grant was revoked — sign in again"}`))
+	}))
+	defer oauthSrv.Close()
+	t.Setenv("SFERENCE_REMOTE_URL", oauthSrv.URL)
+
+	cfg := testConfig(t, upstream.URL, upstream.URL)
+	// Replace the static key with an expired device grant.
+	_ = os.WriteFile(os.Getenv("SFERENCE_SWITCH_AUTH_FILE"),
+		[]byte(`{"access_token":"at-dead","refresh_token":"rt-dead","expires_at":1}`), 0o600)
+
+	g, adminL, _ := newGateway(t, cfg, resolvedAnthropicSference(t))
+	defer adminL.Close()
+	stop := start(t, g)
+	defer stop()
+
+	// Credential present: signed in. (Health may already be
+	// refresh_failed here — reading the admin status fetches the account
+	// email through the oauth client, which discovers the dead grant.)
+	block := adminAuthBlock(t, g)
+	if block["signed_in"] != true {
+		t.Fatalf("initial signed_in = %v, want true: %+v", block["signed_in"], block)
+	}
+
+	// Drive a request through the oauth client: the transport refreshes
+	// the stale grant, gets invalid_grant, and the notify callback flips
+	// the health.
+	_, client, _ := g.sferenceAuthClient()
+	if client == nil {
+		t.Fatal("no oauth client")
+	}
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	resp, err := client.Do(req)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("request with a dead grant must fail")
+	}
+
+	block = adminAuthBlock(t, g)
+	if block["health"] != "refresh_failed" {
+		t.Fatalf("health = %v, want refresh_failed: %+v", block["health"], block)
+	}
+	if block["last_refresh_error"] == "" || block["last_refresh_error"] == nil {
+		t.Fatalf("last_refresh_error not recorded: %+v", block)
+	}
+}
+
+// TestAuthHealthTransientRefreshErrorKeepsOK verifies a transient refresh
+// failure (5xx from the token endpoint) is recorded but does NOT flip
+// health off ok — the app deliberately alarms only on terminal failures.
+func TestAuthHealthTransientRefreshErrorKeepsOK(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	oauthSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"server_error"}`))
+	}))
+	defer oauthSrv.Close()
+	t.Setenv("SFERENCE_REMOTE_URL", oauthSrv.URL)
+
+	cfg := testConfig(t, upstream.URL, upstream.URL)
+	_ = os.WriteFile(os.Getenv("SFERENCE_SWITCH_AUTH_FILE"),
+		[]byte(`{"access_token":"at-stale","refresh_token":"rt-stale","expires_at":1}`), 0o600)
+
+	g, adminL, _ := newGateway(t, cfg, resolvedAnthropicSference(t))
+	defer adminL.Close()
+	stop := start(t, g)
+	defer stop()
+
+	_, client, _ := g.sferenceAuthClient()
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("transient refresh failure should serve the stale token, got %v", err)
+	}
+	resp.Body.Close()
+
+	block := adminAuthBlock(t, g)
+	if block["health"] != "ok" {
+		t.Fatalf("health = %v, want ok (transient): %+v", block["health"], block)
+	}
+	if block["last_refresh_error"] == "" || block["last_refresh_error"] == nil {
+		t.Fatalf("transient error should be recorded: %+v", block)
+	}
+}

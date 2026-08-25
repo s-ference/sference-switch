@@ -282,18 +282,22 @@ Print the spend summary calculated from local telemetry segments.
 `},
 	{"whoami", "Show the signed-in Sference identity and token expiry", `Usage: sference-switch whoami [--profile NAME] [--host URL] [--refresh]
 
-Print the signed-in email, workspace, token expiry, and profile. Authentication
-comes from the credential store written by "sference auth login".
+Print the credential kind (device grant or API key), its source, a masked
+identifier, and for device grants the access-token expiry. Authentication
+comes from the credential store written by "sference-switch auth login".
 
   --profile NAME  Select a credential profile
   --host URL      Override the Sference API host
   --refresh       Force a token refresh before the identity lookup
 `},
-	{"auth", "Re-authenticate with the Sference CLI", `Usage: sference-switch auth login
+	{"auth", "Sign in (device flow or API key) or sign out", `Usage: sference-switch auth login [--api-key sk_...]
+       sference-switch auth logout
 
-Run "sference auth login" interactively, SIGHUP the running router so it picks
-up the fresh credential, then print the identity. sference-switch does not write the
-credential store itself.
+With no flags, runs the OAuth device flow: prints a code, opens the
+verification page, and waits for approval. The grant is written to the
+switch's own auth file and the running router is SIGHUP'd so it picks up the
+fresh credential immediately. With --api-key, stores a static key instead.
+logout revokes the grant (best-effort) and removes the file.
 `},
 	{"doctor", "Diagnose the full request chain and suggest a concrete fix", `Usage: sference-switch doctor [--json] [--probe] [--verbose] [--fix] [--yes] [--timeout SEC]
 

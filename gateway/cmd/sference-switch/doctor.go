@@ -413,10 +413,10 @@ func doctorAuthCheck(add addCheck, f *config.File, unresolved []string, envFile 
 	tok, _, err := auth.Load("")
 	switch {
 	case err != nil:
-		add("auth", "signin", docWarn, fmt.Sprintf("credential file unreadable: %v", err), "sference auth login --api-key sk_...")
+		add("auth", "signin", docWarn, fmt.Sprintf("credential file unreadable: %v", err), "sference-switch auth login")
 		return
 	case tok != nil:
-		add("auth", "signin", docOK, "signed in (API key)", "")
+		add("auth", "signin", docOK, "signed in ("+doctorCredentialKind(tok)+")", "")
 		return
 	}
 
@@ -432,17 +432,32 @@ func doctorAuthCheck(add addCheck, f *config.File, unresolved []string, envFile 
 	}
 	if authVars := doctorAuthPlaceholders(f, unresolved); len(authVars) > 0 {
 		add("auth", "signin", docFail,
-			fmt.Sprintf("not signed in (no API key) and gateway.yaml references ${%s} which is unset; sference-routed requests have no credential", strings.Join(authVars, "}, ${")),
-			fmt.Sprintf("sference auth login --api-key sk_...   (or set %s=... in %s)", authVars[0], envFilePath))
+			fmt.Sprintf("not signed in and gateway.yaml references ${%s} which is unset; sference-routed requests have no credential", strings.Join(authVars, "}, ${")),
+			fmt.Sprintf("sference-switch auth login   (or set %s=... in %s)", authVars[0], envFilePath))
 		return
 	}
 	if names := doctorSferenceRouted(f); len(names) > 0 {
 		add("auth", "signin", docFail,
-			"not signed in (no API key); these clients route to sference and their requests will fail: "+strings.Join(names, ", "),
-			"sference auth login --api-key sk_...")
+			"not signed in; these clients route to sference and their requests will fail: "+strings.Join(names, ", "),
+			"sference-switch auth login")
 		return
 	}
-	add("auth", "signin", docWarn, "not signed in (no enabled client routes to sference, so nothing breaks yet)", "sference auth login --api-key sk_...")
+	add("auth", "signin", docWarn, "not signed in (no enabled client routes to sference, so nothing breaks yet)", "sference-switch auth login")
+}
+
+// doctorCredentialKind describes the resolved credential for the signin
+// check line.
+func doctorCredentialKind(tok *auth.StoredToken) string {
+	switch tok.Kind {
+	case auth.KindEnv:
+		return "SFERENCE_API_KEY"
+	case auth.KindDevice:
+		return "device grant"
+	case auth.KindSharedDevice:
+		return "sference CLI device grant"
+	default:
+		return "API key"
+	}
 }
 
 // doctorAuthHealthCheck reads the running router's credential health

@@ -37,16 +37,30 @@ Homebrew is also available: `brew install sference/sference/sference-switch`.
 
 ## Authentication
 
-Sference Switch uses the same API key as the Sference CLI. Store it once:
+Sign in with your Sference account via the browser (OAuth device flow):
+
+```sh
+sference-switch auth login
+```
+
+This prints a short code, opens the verification page, and waits for approval.
+The resulting grant (24 h access token + 30 d rotating refresh token) is
+written to `~/.sference/switch/credentials.json` — the switch's own file,
+separate from the `sference` CLI's — and the gateway refreshes it
+automatically. Re-run the command monthly (or when the menu bar app shows
+"reauthentication required").
+
+A static API key also works and never expires:
 
 ```sh
 sference-switch auth login --api-key 'sk_...'
 ```
 
-The key is written to `~/.sference/credentials.json` (shared with `sference`
-CLI). The gateway reads it on startup and on SIGHUP, so a new key takes effect
-immediately after `sference-switch restart`. Set `SFERENCE_API_KEY` in the
-environment to override the file.
+If the `sference` CLI is signed in (`sference auth login`), the switch can
+also read that credential from `~/.sference/credentials.json` as a fallback.
+The gateway reads credentials on startup and on SIGHUP, so a new login takes
+effect immediately. Set `SFERENCE_API_KEY` in the environment to override all
+files.
 
 If macOS blocks the app's first launch, open **System Settings → Privacy &
 Security**, scroll to **Security**, and click **Open Anyway**. This control
@@ -225,9 +239,9 @@ user-readable so the interception path is debuggable without `sudo`, even
 though the :443 door itself runs as `root`. The root door's own stderr is
 `/var/log/sference-switch/tlsdoor.log`.
 
-Run `sference-switch auth login` if the Sference credential expires. The command
-delegates authentication to the Sference CLI, reloads the gateway, and prints
-the current identity.
+Run `sference-switch auth login` if the Sference credential expires or the
+grant is revoked. The command runs the browser device flow, reloads the
+gateway, and prints the current identity.
 
 ## Upgrade
 
