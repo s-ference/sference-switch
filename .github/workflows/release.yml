@@ -180,6 +180,11 @@ jobs:
             "$RUNNER_TEMP/release-tag-signing-key.pub" \
             "$RUNNER_TEMP/release-tag-allowed-signers"
 
+      # Two artifacts, not one: upload-artifact roots the archive at the
+      # least common ancestor of its paths. Mixing dist/ and scripts/
+      # roots at the repo, so the publish job would receive
+      # dist/dist/checksums.txt and dist/scripts/release/publish-s3.sh.
+      # Uploading each tree separately keeps both flat on download.
       - name: Preserve release assets for the publish job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -187,6 +192,13 @@ jobs:
           path: |
             dist/sference-switch_*_darwin_universal.zip
             dist/checksums.txt
+          if-no-files-found: error
+
+      - name: Preserve release scripts for the publish job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sference-switch-${{ inputs.release_tag }}-scripts
+          path: |
             scripts/release/get.sh
             scripts/release/publish-s3.sh
           if-no-files-found: error
@@ -206,9 +218,20 @@ jobs:
           name: sference-switch-${{ inputs.release_tag }}-dist
           path: dist
 
+      - name: Download release scripts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
+        with:
+          name: sference-switch-${{ inputs.release_tag }}-scripts
+          path: release-scripts
+
       - name: Re-verify checksums after artifact round-trip
         run: |
           set -euo pipefail
+          # Fail loudly on a layout change rather than on a confusing
+          # "No such file or directory" from shasum.
+          [[ -f dist/checksums.txt ]] \
+            || { printf 'dist/checksums.txt missing; artifact layout changed:\n' >&2
+                 find dist release-scripts -type f >&2; exit 1; }
           cd dist
           shasum -a 256 -c checksums.txt
           cd ..
@@ -241,13 +264,14 @@ jobs:
 
           # Install the release scripts from the artifact (they were included
           # in the upload for reproducibility).
-          chmod +x dist/publish-s3.sh
-          dist/publish-s3.sh \
+          chmod +x release-scripts/publish-s3.sh
+          release-scripts/publish-s3.sh \
             --tag "$RELEASE_TAG" \
             --dist-dir dist \
             --bucket "$RELEASE_S3_BUCKET" \
             --distribution-id "$RELEASE_CLOUDFRONT_DISTRIBUTION_ID" \
-            --channel stable
+            --channel stable \
+            --bootstrap release-scripts/get.sh
 
       - name: Smoke-test the CDN
         env:
@@ -260,3 +284,20 @@ jobs:
           [[ "$actual" == "$version" ]] \
             || { printf 'CDN manifest version %s != expected %s\n' "$actual" "$version" >&2; exit 1; }
           printf 'CDN manifest confirms %s\n' "$actual"
+
+          # The documented install command must work, not just the manifest.
+          # Checking only the manifest let a release pass while
+          # `curl https://get.sference.com | sh` served 404.
+          bootstrap="$(curl -fsSL --proto '=https' --retry 3 "https://get.sference.com/")"
+          printf '%s' "$bootstrap" | head -1 | grep -q '^#!' \
+            || { printf 'bootstrap at / is not a shell script\n' >&2; exit 1; }
+          printf '%s' "$bootstrap" | sh -n \
+            || { printf 'bootstrap at / is not valid POSIX sh\n' >&2; exit 1; }
+          printf 'CDN bootstrap is a valid POSIX sh script\n'
+
+          # The manifest must point at a downloadable artifact.
+          path="$(printf '%s' "$manifest" | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+          curl -fsS --proto '=https' --retry 3 -o /dev/null \
+            "https://get.sference.com/$path" \
+            || { printf 'manifest path %s is not fetchable\n' "$path" >&2; exit 1; }
+          printf 'CDN artifact %s is fetchable\n' "$path"

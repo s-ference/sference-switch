@@ -18,6 +18,7 @@ dist_dir=""
 bucket=""
 distribution_id=""
 channel="stable"
+bootstrap="scripts/release/get.sh"
 dry_run=false
 
 while [ $# -gt 0 ]; do
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
         --bucket) bucket="$2"; shift 2 ;;
         --distribution-id) distribution_id="$2"; shift 2 ;;
         --channel) channel="$2"; shift 2 ;;
+        --bootstrap) bootstrap="$2"; shift 2 ;;
         --dry-run) dry_run=true; shift ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
@@ -36,6 +38,12 @@ done
 [ -n "$dist_dir" ] || { echo "missing --dist-dir" >&2; exit 2; }
 [ -n "$bucket" ] || { echo "missing --bucket" >&2; exit 2; }
 [ -n "$distribution_id" ] || { echo "missing --distribution-id" >&2; exit 2; }
+# The bootstrap is what makes `curl https://get.sference.com | sh` work.
+# It used to be skipped when absent, so a publish job running without a
+# repository checkout published a release whose install URL stayed 404 —
+# and nothing failed, because the smoke test only reads the manifest.
+[ -f "$bootstrap" ] \
+    || { echo "bootstrap script not found: $bootstrap (pass --bootstrap)" >&2; exit 2; }
 
 version="${tag#v}"
 artifact="sference-switch_${version}_darwin_universal.zip"
@@ -136,15 +144,14 @@ aws s3 cp "$manifest_file" "s3://$bucket/sference-switch/$channel/latest.json" \
     --content-type "application/json" \
     --no-progress
 
-# Upload the bootstrap script.
-bootstrap="scripts/release/get.sh"
-if [ -f "$bootstrap" ]; then
-    echo "Uploading install.sh"
-    aws s3 cp "$bootstrap" "s3://$bucket/install.sh" \
-        --cache-control "public, max-age=300" \
-        --content-type "text/plain; charset=utf-8" \
-        --no-progress
-fi
+# Upload the bootstrap script. Its presence is validated up front, so a
+# missing bootstrap fails the publish instead of silently shipping a
+# release whose documented install command 404s.
+echo "Uploading install.sh"
+aws s3 cp "$bootstrap" "s3://$bucket/install.sh" \
+    --cache-control "public, max-age=300" \
+    --content-type "text/plain; charset=utf-8" \
+    --no-progress
 
 # Invalidate the mutable paths.
 echo "Invalidating CloudFront"
