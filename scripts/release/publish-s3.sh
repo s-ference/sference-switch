@@ -55,7 +55,15 @@ checksums_path="$dist_dir/checksums.txt"
 
 # Compute the manifest fields.
 zip_sha256="$(shasum -a 256 "$zip_path" | awk '{print $1}')"
-zip_size="$(stat -f%z "$zip_path")"
+# stat is not portable: BSD/macOS spells this -f%z, GNU/Linux -c%s (where -f
+# means "filesystem" and fails). The publish job runs on ubuntu while local
+# testing happens on macOS, so try both rather than assuming either. wc -c is
+# the POSIX fallback.
+zip_size="$(stat -f%z "$zip_path" 2>/dev/null \
+    || stat -c%s "$zip_path" 2>/dev/null \
+    || wc -c <"$zip_path" | tr -d ' ')"
+[ -n "$zip_size" ] \
+    || { echo "could not determine size of $zip_path" >&2; exit 1; }
 published_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 # The manifest is one field per line so the POSIX-sh installer can extract
