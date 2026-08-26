@@ -432,6 +432,13 @@ func (d *Door) proxyBootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	proxyReq.Host = r.Host
+	// We parse and rewrite this body, so upstream compression buys nothing
+	// and costs correctness. Claude Code is a Bun binary and offers
+	// "gzip, deflate, br, zstd"; forwarding that verbatim let Anthropic
+	// pick brotli, which this door cannot decode — every bootstrap then
+	// failed to parse and was forwarded corrupted. Asking for identity
+	// removes the whole negotiation rather than chasing each new codec.
+	proxyReq.Header.Set("Accept-Encoding", "identity")
 	resp, err := realAnthropicClient.Do(proxyReq)
 	if err != nil {
 		bootstrapLog.log("upstream fetch error: %v", err)
@@ -465,8 +472,12 @@ func (d *Door) proxyBootstrap(w http.ResponseWriter, r *http.Request) {
 	// decompressed body and tries to gunzip plain JSON — getting garbage
 	// and silently discarding the bootstrap.
 	var bodyReader io.Reader = resp.Body
-	isGzip := strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip")
-	if isGzip {
+	encoding := strings.TrimSpace(resp.Header.Get("Content-Encoding"))
+	switch {
+	case encoding == "" || strings.EqualFold(encoding, "identity"):
+		// Plain body, as requested above.
+	case strings.EqualFold(encoding, "gzip"):
+		// Defensive: an upstream may ignore Accept-Encoding: identity.
 		gzReader, err := gzip.NewReader(resp.Body)
 		if err != nil {
 			bootstrapLog.log("gzip reader error: %v", err)
@@ -474,6 +485,22 @@ func (d *Door) proxyBootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 		defer gzReader.Close()
 		bodyReader = gzReader
+	default:
+		// An encoding we cannot decode. Stripping Content-Encoding from a
+		// body we never decompressed hands the client compressed bytes
+		// labelled as plain JSON, so it discards the entire bootstrap —
+		// model access, org defaults and costs, not just our picker
+		// entries. Forward it verbatim: skipping injection degrades one
+		// nicety, corrupting the bootstrap breaks everything.
+		bootstrapLog.log("cannot decode Content-Encoding %q — forwarding upstream response untouched", encoding)
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+		return
 	}
 	body, err := io.ReadAll(io.LimitReader(bodyReader, 1<<20))
 	if err != nil {
