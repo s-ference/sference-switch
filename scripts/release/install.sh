@@ -1,7 +1,8 @@
 #!/bin/sh
 # Install an ad-hoc signed Sference Switch beta release payload on macOS.
-# Homebrew is the canonical public installation path. This installer is
-# retained for release-asset verification and approved direct installs.
+# The curl installer at https://get.sference.com is the canonical public
+# installation path and delegates to this script. It is also run directly
+# for release-asset verification and approved direct installs.
 set -eu
 cd "$(dirname "$0")"
 
@@ -110,9 +111,13 @@ Quick start:
   sference-switch claude on
   sference-switch doctor --probe
 
-Homebrew is the canonical public install and upgrade channel:
+Upgrade later with:
 
-  brew install sference/sference/sference-switch
+  sference-switch upgrade --restart
+
+or by re-running the canonical installer:
+
+  curl -fsSL https://get.sference.com | sh
 
 Sference Switch runs locally. Request bodies leave the machine only for
 the model provider selected by routing policy.

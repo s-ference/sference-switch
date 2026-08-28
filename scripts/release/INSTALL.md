@@ -23,8 +23,6 @@ sference-switch up
 sference-switch doctor --probe
 ```
 
-Homebrew is also available: `brew install sference/sference/sference-switch`.
-
 ## Direct release asset
 
 Approved direct installs use
