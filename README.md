@@ -33,8 +33,6 @@ sference-switch up
 sference-switch doctor --probe
 ```
 
-Homebrew is also available: `brew install sference/sference/sference-switch`.
-
 ## Authentication
 
 Sign in with your Sference account via the browser (OAuth device flow):
@@ -132,7 +130,7 @@ The menu bar app is the primary interface for daily use. It provides:
 
 After an upgrade, `sference-switch up` adopts the new CLI and app version.
 Run `sference-switch menubar` when you only need to install, refresh, or reopen
-the app from the current Homebrew package.
+the app from the currently installed package.
 
 The app and CLI update the same configuration. You can use either interface
 without maintaining separate state.
@@ -246,14 +244,24 @@ gateway, and prints the current identity.
 ## Upgrade
 
 ```sh
-brew upgrade sference-switch
-sference-switch up
+sference-switch upgrade --restart
 sference-switch doctor
 ```
 
-`up` leaves healthy current components alone and moves stale components to the
-new binary and app. Homebrew remains the canonical public install and upgrade
-channel.
+`upgrade` fetches the latest release manifest from `get.sference.com`, verifies
+the SHA-256 checksum, and replaces the CLI and menubar app in place. No sudo is
+needed. Pass `--check` to report whether an update is available without
+installing one, or `--cli-only` to leave the app alone.
+
+The `:443` TLS door runs as a separate root daemon and keeps its old binary
+until it is restarted:
+
+```sh
+sudo launchctl kickstart -k system/co.sference.switch.tlsdoor
+```
+
+Re-running `curl -fsSL https://get.sference.com | sh` is equivalent to
+`upgrade` and also works.
 
 ## Uninstall
 
@@ -268,7 +276,6 @@ residue, and the Mac app:
 
 ```sh
 sference-switch uninstall
-brew uninstall sference-switch
 ```
 
 The default uninstall retains configuration, telemetry, logs, and backups.
@@ -276,7 +283,6 @@ To remove those files as well, use this instead of the standard uninstall:
 
 ```sh
 sference-switch uninstall --purge --yes
-brew uninstall sference-switch
 ```
 
 Uninstall never removes Sference CLI credentials or keychain entries. If the
@@ -343,7 +349,7 @@ nix profile upgrade --refresh sference-switch
 sference-switch up
 ```
 
-Homebrew is the supported path for the complete macOS product.
+The curl installer is the supported path for the complete macOS product.
 
 ## License
 

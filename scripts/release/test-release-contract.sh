@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PACKAGER="$SCRIPT_DIR/build-artifacts.sh"
-CANONICAL_INSTALL="brew install sference/sference/sference-switch"
+CANONICAL_INSTALL="curl -fsSL https://get.sference.com | sh"
 INSTALL_SURFACES=(
   "$REPO_DIR/README.md"
   "$REPO_DIR/scripts/release/INSTALL.md"
@@ -23,7 +23,7 @@ sh -n "$SCRIPT_DIR/install.sh"
 
 for install_surface in "${INSTALL_SURFACES[@]}"; do
   grep -Fq "$CANONICAL_INSTALL" "$install_surface" \
-    || fail "$install_surface omitted the canonical single-formula install"
+    || fail "$install_surface omitted the canonical curl install"
 done
 if grep -F 'sference/sference/sference ' "${INSTALL_SURFACES[@]}"; then
   fail "a redundant two-formula install command remains"
