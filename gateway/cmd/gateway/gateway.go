@@ -1207,6 +1207,10 @@ func (g *Gateway) upstreamModelFor(rc resolvedClientConfig) string {
 
 func (g *Gateway) forwardModelsGet(cl *clientListener, w http.ResponseWriter, r *http.Request) {
 	cfg := g.runtimeConfig()
+	// Whether to serve /v1/models locally stays a config decision: a client
+	// with no model_aliases proxies its provider's list, and deriving
+	// aliases must not silently convert it into a locally-served one. What
+	// changed is the CONTENT of the local list, not who gets one.
 	if cl.cfg.ProtocolShape == "anthropic" && len(cl.cfg.ModelAliases) > 0 {
 		g.aliasModelsGet(cl, w, r)
 		return
@@ -1366,7 +1370,10 @@ func (g *Gateway) aliasModelsGet(cl *clientListener, w http.ResponseWriter, r *h
 	// other route is served from the priced catalog with no upstream call, so
 	// the picker never depends on Anthropic reachability.
 	catalog := g.catalogAnthropicModelEntries()
-	aliases := aliasModelEntries(cl.cfg.ModelAliases)
+	// Derived ∪ configured: publishing only the hand-written map left every
+	// new catalog model out of /model until someone edited gateway.yaml.
+	aliases := aliasModelEntries(
+		effectiveModelAliases(g.pricing.Capture(), cl.cfg.ModelAliases))
 	if cl.cfg.Route == "anthropic" {
 		// Ordering and metadata come from different sources. The native list
 		// decides position, but the curated entries (priced catalog, then
@@ -2182,15 +2189,28 @@ func InAliasNamespace(id string) bool {
 // the fix, so a request for a removed alias is actionable instead of
 // a silent default-model route.
 func unknownAliasError(rc resolvedClientConfig, id string) error {
-	fix := fmt.Sprintf("add it to model_aliases for client %q in gateway.yaml and reload the gateway (kill -HUP $(cat ~/.sference/switch/gateway.pid)), or pick another model; Claude Code refreshes its cached picker list (~/.claude/cache/gateway-models.json) at next launch", rc.Name)
-	if len(rc.ModelAliases) == 0 {
-		return fmt.Errorf("unknown gateway model %q: client %q has no model_aliases configured. Fix: %s", id, rc.Name, fix)
+	return unknownAliasErrorWithAliases(rc, id, rc.ModelAliases)
+}
+
+// unknownAliasErrorWithAliases reports against the alias set actually used to
+// resolve the request — the derived ∪ configured union, not the hand-written
+// map alone. Aliases are published from the catalog now, so a stale id means
+// the model left the catalog or the picker cache is old; telling the user to
+// edit gateway.yaml would send them to a file that no longer drives this.
+func unknownAliasErrorWithAliases(
+	rc resolvedClientConfig,
+	id string,
+	aliases map[string]string,
+) error {
+	fix := "pick another model, or check that it is still in your Sference catalog; Claude Code refreshes its cached picker list (~/.claude/cache/gateway-models.json) at next launch"
+	if len(aliases) == 0 {
+		return fmt.Errorf("unknown gateway model %q: client %q has no Sference models available (the catalog may be empty or the session signed out). Fix: %s", id, rc.Name, fix)
 	}
-	ids := make([]string, 0, len(rc.ModelAliases))
-	for a := range rc.ModelAliases {
+	ids := make([]string, 0, len(aliases))
+	for a := range aliases {
 		ids = append(ids, a)
 	}
-	return fmt.Errorf("unknown gateway model %q: configured model_aliases for client %q are [%s]. Fix: %s", id, rc.Name, strings.Join(sortedKeys(ids), ", "), fix)
+	return fmt.Errorf("unknown gateway model %q: available Sference models for client %q are [%s]. Fix: %s", id, rc.Name, strings.Join(sortedKeys(ids), ", "), fix)
 }
 
 // resolveExplicitModelAttempt implements explicit-choice-wins routing
@@ -2231,10 +2251,15 @@ func (g *Gateway) resolveExplicitModelAttemptWithSnapshot(
 		target = requested
 	} else if cl.cfg.ProtocolShape != "anthropic" {
 		return upstreamAttempt{}, false, nil
-	} else if slug, ok := cl.cfg.ModelAliases[requested]; ok {
-		target = slug
+	} else if effective := effectiveModelAliases(
+		snapshot, cl.cfg.ModelAliases); effective[requested] != "" {
+		// Resolve against the same union the picker publishes, so a derived
+		// entry a user selects in /model routes instead of erroring.
+		target = effective[requested]
 	} else if InAliasNamespace(requested) {
-		return upstreamAttempt{}, false, unknownAliasError(cl.cfg, requested)
+		return upstreamAttempt{}, false, unknownAliasErrorWithAliases(
+			cl.cfg, requested,
+			effectiveModelAliases(snapshot, cl.cfg.ModelAliases))
 	} else {
 		return upstreamAttempt{}, false, nil
 	}

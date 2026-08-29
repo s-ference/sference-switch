@@ -163,20 +163,31 @@ func (g *Gateway) modelCatalogModelsFromSnapshot(
 	snapshot *pricing.Snapshot,
 	models []modelCatalogModel,
 ) []modelCatalogModel {
-	// Build a reverse map from slug → alias from the active config's model_aliases.
+	// Build a reverse map from slug → alias over the aliases the gateway
+	// actually serves: derived from this catalog, unioned with the active
+	// config's model_aliases.
+	//
+	// This must match what /v1/models publishes. The TLS door's picker
+	// injection reads THIS endpoint and skips any model without an alias, so
+	// reporting config-only aliases here would leave catalog models out of
+	// Claude Code's /model picker even though the router routes them.
 	slugToAlias := map[string]string{}
 	g.stateMu.RLock()
+	configured := map[string]string{}
 	if g.activeConfigFile != nil {
 		for _, c := range g.activeConfigFile.Clients {
 			if c.ProtocolShape != "anthropic" && c.ProtocolShape != "" {
 				continue
 			}
 			for alias, slug := range c.ModelAliases {
-				slugToAlias[slug] = alias
+				configured[alias] = slug
 			}
 		}
 	}
 	g.stateMu.RUnlock()
+	for alias, slug := range effectiveModelAliases(snapshot, configured) {
+		slugToAlias[slug] = alias
+	}
 
 	resolved := make([]modelCatalogModel, len(models))
 	now := modelCatalogNow().UTC()

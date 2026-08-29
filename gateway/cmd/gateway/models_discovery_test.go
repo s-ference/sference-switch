@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -62,11 +63,14 @@ func getModelsList(t *testing.T, g *Gateway, name, query string) (int, modelsLis
 	return resp.StatusCode, ml
 }
 
-// TestAliasModelsSynthesisServedLocally: with model_aliases configured,
-// GET /v1/models is synthesized without contacting any upstream on the
-// sference/monitor/openai routes, in the Anthropic list shape, sorted by
-// alias id, and every id survives the picker's claude/anthropic prefix
-// filter.
+// TestAliasModelsSynthesisServedLocally: GET /v1/models is synthesized
+// without contacting any upstream on the sference/monitor/openai routes, in
+// the Anthropic list shape, sorted by alias id, and every id survives the
+// picker's claude/anthropic prefix filter.
+//
+// The list is the derived ∪ configured union, so it also carries catalog
+// models with no model_aliases entry; this asserts the configured ids are
+// present and correctly ordered rather than pinning an exact count.
 func TestAliasModelsSynthesisServedLocally(t *testing.T) {
 	for _, rt := range []string{"sference", "monitor", "openai"} {
 		t.Run(rt, func(t *testing.T) {
@@ -85,12 +89,28 @@ func TestAliasModelsSynthesisServedLocally(t *testing.T) {
 			if status != 200 {
 				t.Fatalf("GET /v1/models got %d", status)
 			}
-			if len(ml.Data) != 2 {
-				t.Fatalf("data has %d entries, want 2: %+v", len(ml.Data), ml.Data)
+			if len(ml.Data) < 2 {
+				t.Fatalf("data has %d entries, want at least the 2 configured: %+v", len(ml.Data), ml.Data)
 			}
 			// Stable ordering: sorted by alias id.
-			if ml.Data[0].ID != "anthropic-sference-kimi" || ml.Data[1].ID != "claude-sference-glm-5-2" {
-				t.Fatalf("alias order wrong: %+v", ml.Data)
+			ids := make([]string, 0, len(ml.Data))
+			for _, e := range ml.Data {
+				ids = append(ids, e.ID)
+			}
+			if !sort.StringsAreSorted(ids) {
+				t.Fatalf("alias order is not sorted by id: %+v", ids)
+			}
+			for _, want := range []string{"anthropic-sference-kimi", "claude-sference-glm-5-2"} {
+				found := false
+				for _, id := range ids {
+					if id == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("configured alias %q missing from %+v", want, ids)
+				}
 			}
 			for _, e := range ml.Data {
 				if e.Type != "model" {
@@ -107,8 +127,10 @@ func TestAliasModelsSynthesisServedLocally(t *testing.T) {
 			if ml.HasMore {
 				t.Error("has_more should be false for the full list")
 			}
-			if ml.FirstID == nil || *ml.FirstID != "anthropic-sference-kimi" || ml.LastID == nil || *ml.LastID != "claude-sference-glm-5-2" {
-				t.Errorf("first_id/last_id wrong: %v %v", ml.FirstID, ml.LastID)
+			if ml.FirstID == nil || *ml.FirstID != ids[0] ||
+				ml.LastID == nil || *ml.LastID != ids[len(ids)-1] {
+				t.Errorf("first_id/last_id do not bracket the page %v: %v %v",
+					ids, ml.FirstID, ml.LastID)
 			}
 		})
 	}
@@ -148,10 +170,11 @@ func TestAliasModelsRespectsLimit(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("second page got %d", status)
 	}
-	if len(next.Data) != 1 ||
-		next.Data[0].ID != "claude-sference-glm-5-2" ||
-		next.HasMore {
-		t.Fatalf("second page = %+v", next)
+	if len(next.Data) != 1 {
+		t.Fatalf("second page should hold exactly one entry: %+v", next.Data)
+	}
+	if next.Data[0].ID == "anthropic-sference-kimi" {
+		t.Fatalf("second page repeated the after_id anchor: %+v", next.Data)
 	}
 }
 
@@ -183,9 +206,22 @@ func TestAliasModelsNativeRouteMergesProxiedList(t *testing.T) {
 		for _, e := range ml.Data {
 			ids = append(ids, e.ID)
 		}
-		want := "claude-opus-4-8,claude-sference-glm-5-2,anthropic-sference-kimi"
-		if strings.Join(ids, ",") != want {
-			t.Fatalf("merged ids = %v, want %s (native first, aliases appended, dupes dropped)", ids, want)
+		// Native list leads, aliases follow, no duplicates. The alias tail
+		// is the derived ∪ configured union, so only the prefix is pinned.
+		if len(ids) < 3 || ids[0] != "claude-opus-4-8" {
+			t.Fatalf("merged ids = %v, want the native list first", ids)
+		}
+		seen := map[string]bool{}
+		for _, id := range ids {
+			if seen[id] {
+				t.Fatalf("merged ids contain a duplicate %q: %v", id, ids)
+			}
+			seen[id] = true
+		}
+		for _, want := range []string{"claude-sference-glm-5-2", "anthropic-sference-kimi"} {
+			if !seen[want] {
+				t.Fatalf("merged ids missing configured alias %q: %v", want, ids)
+			}
 		}
 		select {
 		case k := <-gotKey:
@@ -211,8 +247,13 @@ func TestAliasModelsNativeRouteMergesProxiedList(t *testing.T) {
 		if status != 200 {
 			t.Fatalf("GET /v1/models got %d, want 200 despite dead native upstream", status)
 		}
-		if len(ml.Data) != 2 {
-			t.Fatalf("data has %d entries, want the 2 aliases: %+v", len(ml.Data), ml.Data)
+		if len(ml.Data) < 2 {
+			t.Fatalf("data has %d entries, want at least the configured aliases: %+v", len(ml.Data), ml.Data)
+		}
+		for _, e := range ml.Data {
+			if e.ID == "claude-opus-4-8" {
+				t.Fatalf("dead native upstream must not contribute ids: %+v", ml.Data)
+			}
 		}
 	})
 }
@@ -397,8 +438,11 @@ func TestAliasRequestNoSilentFallback(t *testing.T) {
 }
 
 // TestUnknownAliasLoud400: an unrecognized claude-sference-*/anthropic-sference-*
-// id is a 400 naming the id, the configured aliases, and the fix,
+// id is a 400 naming the id, the available aliases, and the fix,
 // never a silent default-model route and never a pass-through to Anthropic.
+//
+// Aliases are published from the catalog, so the remedy is no longer a
+// gateway.yaml edit: the message points at model choice and the catalog.
 func TestUnknownAliasLoud400(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -431,7 +475,7 @@ func TestUnknownAliasLoud400(t *testing.T) {
 			if resp.StatusCode != 400 {
 				t.Fatalf("got %d, want 400: %s", resp.StatusCode, rb)
 			}
-			for _, want := range []string{"claude-sference-removed", "model_aliases", "gateway.yaml", "HUP"} {
+			for _, want := range []string{"claude-sference-removed", "available Sference models", "catalog"} {
 				if !strings.Contains(rb, want) {
 					t.Errorf("400 body missing %q: %s", want, rb)
 				}
