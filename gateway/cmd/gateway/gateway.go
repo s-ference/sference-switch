@@ -1286,7 +1286,18 @@ const aliasModelCreatedAt = "2026-07-07T00:00:00Z"
 // model_aliases in the Anthropic list-entry shape, sorted by alias id
 // for stable ordering. display_name is populated but the picker does
 // not render it (validated 2026-07-07): the alias id IS the UX.
+//
+// A 1M-context model publishes only its [1m] id. Claude Code believes an
+// undecorated id holds 200k tokens and auto-compacts against that — a bare
+// entry would offer the model at a fifth of its real window. The bare id
+// stays in the alias map and keeps routing; it is only hidden here.
 func aliasModelEntries(aliases map[string]string) []map[string]any {
+	oneMillionSlugs := map[string]bool{}
+	for id, slug := range aliases {
+		if strings.HasSuffix(id, autoAliasOneMillionSuffix) {
+			oneMillionSlugs[slug] = true
+		}
+	}
 	ids := make([]string, 0, len(aliases))
 	for id := range aliases {
 		ids = append(ids, id)
@@ -1294,6 +1305,9 @@ func aliasModelEntries(aliases map[string]string) []map[string]any {
 	out := make([]map[string]any, 0, len(ids))
 	for _, id := range sortedKeys(ids) {
 		slug := aliases[id]
+		if oneMillionSlugs[slug] && !strings.HasSuffix(id, autoAliasOneMillionSuffix) {
+			continue
+		}
 		short := slug
 		if i := strings.LastIndex(slug, "/"); i >= 0 {
 			short = slug[i+1:]
@@ -2246,22 +2260,30 @@ func (g *Gateway) resolveExplicitModelAttemptWithSnapshot(
 	if requested == "" {
 		return upstreamAttempt{}, false, nil
 	}
+	// A trailing bracketed suffix (Claude Code's [1m] context selection) is
+	// harness decoration, not provider identity: requestprofile captures it
+	// separately, so routing and the upstream model must use the bare form.
+	normalized := normalizeModelID(requested)
 	target := ""
-	if strings.Contains(requested, "/") {
-		target = requested
+	if strings.Contains(normalized, "/") {
+		target = normalized
 	} else if cl.cfg.ProtocolShape != "anthropic" {
 		return upstreamAttempt{}, false, nil
-	} else if effective := effectiveModelAliases(
-		snapshot, cl.cfg.ModelAliases); effective[requested] != "" {
-		// Resolve against the same union the picker publishes, so a derived
-		// entry a user selects in /model routes instead of erroring.
-		target = effective[requested]
-	} else if InAliasNamespace(requested) {
-		return upstreamAttempt{}, false, unknownAliasErrorWithAliases(
-			cl.cfg, requested,
-			effectiveModelAliases(snapshot, cl.cfg.ModelAliases))
 	} else {
-		return upstreamAttempt{}, false, nil
+		// Resolve against the same union the picker publishes, so a derived
+		// entry a user selects in /model routes instead of erroring. The
+		// lookup uses the normalized id, so a [1m] twin resolves to the same
+		// slug as its bare alias.
+		effective := effectiveModelAliases(snapshot, cl.cfg.ModelAliases)
+		switch {
+		case effective[normalized] != "":
+			target = effective[normalized]
+		case InAliasNamespace(requested):
+			return upstreamAttempt{}, false, unknownAliasErrorWithAliases(
+				cl.cfg, requested, effective)
+		default:
+			return upstreamAttempt{}, false, nil
+		}
 	}
 	at, err := g.buildAttemptTargetWithSnapshot(
 		snapshot,

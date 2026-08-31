@@ -40,13 +40,19 @@ type modelCatalogResponse struct {
 }
 
 type modelCatalogModel struct {
-	Slug          string                 `json:"slug"`
-	DisplayName   string                 `json:"display_name"`
-	StorageTarget string                 `json:"storage_target"`
-	Alias         string                 `json:"alias,omitempty"`
-	Label         string                 `json:"label,omitempty"`
-	Available     bool                   `json:"available"`
-	Reasoning     *modelCatalogReasoning `json:"reasoning,omitempty"`
+	Slug          string `json:"slug"`
+	DisplayName   string `json:"display_name"`
+	StorageTarget string `json:"storage_target"`
+	Alias         string `json:"alias,omitempty"`
+	// AliasOneMillion is the [1m] twin id for a 1M-context model, empty
+	// otherwise. It is a second picker entry for the SAME slug, not a
+	// second model: the rows stay one-per-slug so slug-keyed consumers
+	// (the app's projectModelCatalog) are unaffected, and only the TLS
+	// door's picker injection fans it out into its own entry.
+	AliasOneMillion string                 `json:"alias_1m,omitempty"`
+	Label           string                 `json:"label,omitempty"`
+	Available       bool                   `json:"available"`
+	Reasoning       *modelCatalogReasoning `json:"reasoning,omitempty"`
 }
 
 type modelCatalogReasoning struct {
@@ -171,7 +177,12 @@ func (g *Gateway) modelCatalogModelsFromSnapshot(
 	// injection reads THIS endpoint and skips any model without an alias, so
 	// reporting config-only aliases here would leave catalog models out of
 	// Claude Code's /model picker even though the router routes them.
-	slugToAlias := map[string]string{}
+	// The union can carry two ids per slug: the bare alias and its [1m]
+	// 1M-context twin. Group per slug so the primary alias is chosen
+	// deterministically (bare preferred — a [1m] twin never replaces the
+	// main entry); the twin is published below as its own row so the TLS
+	// door injects both picker entries.
+	aliasesBySlug := map[string][]string{}
 	g.stateMu.RLock()
 	configured := map[string]string{}
 	if g.activeConfigFile != nil {
@@ -186,25 +197,28 @@ func (g *Gateway) modelCatalogModelsFromSnapshot(
 	}
 	g.stateMu.RUnlock()
 	for alias, slug := range effectiveModelAliases(snapshot, configured) {
-		slugToAlias[slug] = alias
+		aliasesBySlug[slug] = append(aliasesBySlug[slug], alias)
 	}
 
 	resolved := make([]modelCatalogModel, len(models))
 	now := modelCatalogNow().UTC()
 	for i, model := range models {
 		displayName := sferenceModelDisplayName(snapshot, model.Slug)
-		alias := slugToAlias[model.Slug]
 		label := displayName
 		if label == "" {
 			label = model.Slug
 		}
+		twin, _ := oneMillionTwinAlias(
+			snapshot, aliasesBySlug[model.Slug], model.Slug,
+		)
 		resolved[i] = modelCatalogModel{
-			Slug:          model.Slug,
-			DisplayName:   displayName,
-			StorageTarget: model.Slug,
-			Alias:         alias,
-			Label:         label,
-			Available:     true,
+			Slug:            model.Slug,
+			DisplayName:     displayName,
+			StorageTarget:   model.Slug,
+			Alias:           primaryAlias(aliasesBySlug[model.Slug]),
+			AliasOneMillion: twin,
+			Label:           label,
+			Available:       true,
 			Reasoning: modelCatalogReasoningFromSnapshot(
 				snapshot,
 				model.Slug,
@@ -213,6 +227,43 @@ func (g *Gateway) modelCatalogModelsFromSnapshot(
 		}
 	}
 	return resolved
+}
+
+// primaryAlias picks the id a catalog model publishes as its main picker
+// entry: the lexicographically first alias without the [1m] decoration,
+// or the first alias at all when every one carries it. The sort keeps the
+// choice stable across restarts.
+func primaryAlias(aliases []string) string {
+	sorted := sortedKeys(aliases)
+	for _, id := range sorted {
+		if !strings.HasSuffix(id, autoAliasOneMillionSuffix) {
+			return id
+		}
+	}
+	if len(sorted) > 0 {
+		return sorted[0]
+	}
+	return ""
+}
+
+// oneMillionTwinAlias returns the [1m] twin id for a 1M-context model,
+// ok=false when the model is below 1M context, its window is unknown, it
+// is absent from the pricing snapshot, or the union carries no twin.
+func oneMillionTwinAlias(
+	snapshot *pricing.Snapshot,
+	aliases []string,
+	slug string,
+) (string, bool) {
+	record, ok := snapshot.Model(pricing.ProviderSference, slug)
+	if !ok || sferenceContextWindow(record) < oneMillionContextTokens {
+		return "", false
+	}
+	for _, id := range sortedKeys(aliases) {
+		if strings.HasSuffix(id, autoAliasOneMillionSuffix) {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 func modelCatalogReasoningFromSnapshot(

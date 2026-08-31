@@ -334,6 +334,77 @@ func TestModelRouteSuffixedIDMatching(t *testing.T) {
 	}
 }
 
+// TestModelRouteOneMillionAliasResolves asserts the request-path half of the
+// [1m] picker twin: Claude Code sends the decorated id it was given, and the
+// gateway must route it to the same slug as the bare alias. The decoration is
+// harness context selection, never part of the provider model — an upstream
+// that received "…-glm-5-2[1m]" would 400.
+func TestModelRouteOneMillionAliasResolves(t *testing.T) {
+	gotModel := make(chan string, 2)
+	basSrv := recordingStub(t, gotModel, "VIA-SFERENCE")
+	defer basSrv.Close()
+	antSrv := recordingStub(t, gotModel, "VIA-ANTHROPIC")
+	defer antSrv.Close()
+	cfg := testConfig(t, basSrv.URL, antSrv.URL)
+	rc := modelRoutesClient(t, "sference", nil)
+	g, adminL, _ := newGateway(t, cfg, rc)
+	defer adminL.Close()
+	stop := start(t, g)
+	defer stop()
+
+	resp, rb := postModelMessages(t, g, "claude-sference-glm-5-2[1m]", "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("got %d: %s", resp.StatusCode, rb)
+	}
+	select {
+	case m := <-gotModel:
+		if m != "zai-org/GLM-5.2" {
+			t.Fatalf("upstream got model %q, want the bare slug", m)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream never received the request")
+	}
+	rows := waitForRows(t, cfg.TelemetryDir, 1, 2*time.Second)
+	// requestprofile canonicalizes the body before the attempt is built, so
+	// telemetry records the bare id and carries the 1M selection in
+	// requested_context_budget_tokens instead — the pre-existing [1m]
+	// contract, unchanged by the twin aliases.
+	if rows[0].RequestedModel != "claude-sference-glm-5-2" {
+		t.Errorf("requested_model = %q, want the canonical id",
+			rows[0].RequestedModel)
+	}
+	if rows[0].ServedModel != "zai-org/GLM-5.2" {
+		t.Errorf("upstream_model = %q, want zai-org/GLM-5.2", rows[0].ServedModel)
+	}
+	if rows[0].RequestedContextBudgetTokens == nil ||
+		*rows[0].RequestedContextBudgetTokens != 1_000_000 {
+		t.Errorf("requested_context_budget_tokens = %v, want 1000000",
+			rows[0].RequestedContextBudgetTokens)
+	}
+}
+
+// A decorated id that resolves to nothing must stay a loud 400 naming the id
+// as sent: silently dropping the suffix and routing the default model would
+// serve a model the user did not choose.
+func TestModelRouteUnknownOneMillionAliasRejected(t *testing.T) {
+	basSrv := recordingStub(t, nil, "VIA-SFERENCE")
+	defer basSrv.Close()
+	antSrv := recordingStub(t, nil, "VIA-ANTHROPIC")
+	defer antSrv.Close()
+	cfg := testConfig(t, basSrv.URL, antSrv.URL)
+	rc := modelRoutesClient(t, "sference", nil)
+	g, adminL, _ := newGateway(t, cfg, rc)
+	defer adminL.Close()
+	stop := start(t, g)
+	defer stop()
+
+	resp, rb := postModelMessages(t, g, "claude-sference-not-a-model[1m]", "")
+	if resp.StatusCode != http.StatusBadRequest ||
+		!strings.Contains(rb, "claude-sference-not-a-model[1m]") {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, rb)
+	}
+}
+
 func TestResolveModelRoutePinUsesCatalogFamily(t *testing.T) {
 	rc := modelRoutesClient(
 		t,

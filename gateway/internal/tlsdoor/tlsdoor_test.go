@@ -42,6 +42,47 @@ func TestFetchSferenceModels(t *testing.T) {
 	}
 }
 
+// A 1M-context model publishes ONLY its [1m] entry: Claude Code believes an
+// undecorated id holds 200k tokens, so listing both would offer the model at
+// a fifth of its real window right next to the full one. Sub-1M models keep
+// their bare alias.
+func TestFetchSferenceModelsPrefersOneMillionEntry(t *testing.T) {
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"state":"ready","models":[
+			{"slug":"zai-org/GLM-5.3","display_name":"GLM 5.3","alias":"claude-sference-glm-5-3","alias_1m":"claude-sference-glm-5-3[1m]","available":true},
+			{"slug":"bottlecapai/ThinkingCap","display_name":"ThinkingCap","alias":"claude-sference-thinkingcap","available":true}
+		]}`)
+	}))
+	defer admin.Close()
+
+	models := fetchSferenceModels(strings.TrimPrefix(admin.URL, "http://"))
+	if len(models) != 2 {
+		t.Fatalf("got %d entries, want 2 (one per model): %+v", len(models), models)
+	}
+	byID := map[string]sferenceModelEntry{}
+	for _, m := range models {
+		if _, duplicate := byID[m.Model]; duplicate {
+			t.Errorf("model %q published twice", m.Model)
+		}
+		byID[m.Model] = m
+	}
+	glm, ok := byID["claude-sference-glm-5-3[1m]"]
+	if !ok {
+		t.Fatalf("[1m] entry missing, bare %q must not be listed instead: %+v",
+			"claude-sference-glm-5-3", byID)
+	}
+	if _, bareListed := byID["claude-sference-glm-5-3"]; bareListed {
+		t.Error("bare alias of a 1M model is listed alongside its [1m] entry")
+	}
+	if !strings.Contains(glm.Name, "1M") {
+		t.Errorf("1M entry name = %q, want the 1M variant marked", glm.Name)
+	}
+	if _, ok := byID["claude-sference-thinkingcap"]; !ok {
+		t.Errorf("sub-1M bare alias missing: %+v", byID)
+	}
+}
+
 func TestFetchSferenceModelsUnreachable(t *testing.T) {
 	models := fetchSferenceModels("127.0.0.1:1")
 	if models != nil {

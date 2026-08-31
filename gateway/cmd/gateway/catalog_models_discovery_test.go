@@ -78,13 +78,18 @@ func TestCatalogBackedClaudeModelsDiscoveryProjectsOnlyPricedModels(t *testing.T
 			joined := strings.Join(ids, ",")
 			for _, required := range []string{
 				"anthropic-sference-kimi",
-				"claude-sference-glm-5-2",
+				// GLM-5.2 is a 1M-context model, so only its [1m] id is
+				// listed — the bare id stays routable but hidden.
+				"claude-sference-zai-org-glm-5-2[1m]",
 				"claude-newfamily-1",
 				"claude-opus-5",
 			} {
 				if !strings.Contains(","+joined+",", ","+required+",") {
 					t.Fatalf("models %v omitted %q", ids, required)
 				}
+			}
+			if strings.Contains(","+joined+",", ",claude-sference-glm-5-2,") {
+				t.Fatalf("bare id of a 1M model listed alongside its [1m] id: %v", ids)
 			}
 			if strings.Contains(joined, "claude-haiku-unpriced") {
 				t.Fatalf("unpriced catalog model was published: %v", ids)
