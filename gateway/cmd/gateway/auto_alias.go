@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/sference/sference-switch/gateway/internal/modelmeta"
 	"github.com/sference/sference-switch/gateway/internal/pricing"
 )
 
@@ -78,6 +79,46 @@ func autoAliasID(slug string) (string, bool) {
 	return id, true
 }
 
+// oneMillionContextTokens is the context window at which a catalog model
+// gets a [1m] picker twin alias. Claude Code believes any unrecognized
+// model id holds 200k tokens, and its auto-compact window is
+// min(believed, CLAUDE_CODE_AUTO_COMPACT_WINDOW) — so a 1M Sference
+// model behind its bare alias auto-compacts at ~180k no matter what the
+// user configures. Claude Code treats an id containing "[1m]" as a 1M
+// model (its own unknown-model advice: "append [1m] to the model name
+// for 1M"), so the twin raises that belief to 1M for the picker entry
+// and the user's window setting is honored.
+const oneMillionContextTokens = 1_000_000
+
+// autoAliasOneMillionSuffix is the id decoration Claude Code recognizes.
+const autoAliasOneMillionSuffix = "[1m]"
+
+// autoAliasOneMillionID appends the [1m] decoration to a derived id,
+// validated with the same predicates that gate the base alias.
+func autoAliasOneMillionID(id string) (string, bool) {
+	if id == "" {
+		return "", false
+	}
+	twin := id + autoAliasOneMillionSuffix
+	if !discoveryPrefixOK(twin) || reservedAnthropicModelRe.MatchString(twin) {
+		return "", false
+	}
+	return twin, true
+}
+
+// sferenceContextWindow resolves a catalog record's context window,
+// falling back to the vendored modelmeta table when the record carries no
+// live context evidence: neither the public catalog fetch nor the on-disk
+// provider cache serializes context_tokens today, so the fallback is what
+// real installs rely on. Unknown models resolve to 0 — never a lie about
+// 1M — and no twin is minted for them.
+func sferenceContextWindow(record pricing.ModelRecord) int64 {
+	if record.ContextTokens > 0 {
+		return record.ContextTokens
+	}
+	return modelmeta.SferenceContextTokens(record.CanonicalModelID)
+}
+
 // deriveAutoAliases returns alias id -> slug for every catalog model that
 // should appear in the picker.
 //
@@ -107,6 +148,13 @@ func deriveAutoAliases(snapshot *pricing.Snapshot) map[string]string {
 			continue
 		}
 		out[id] = slug
+		if sferenceContextWindow(record) >= oneMillionContextTokens {
+			if twin, ok := autoAliasOneMillionID(id); ok {
+				if _, taken := out[twin]; !taken {
+					out[twin] = slug
+				}
+			}
+		}
 	}
 	if len(out) == 0 {
 		return nil
@@ -134,7 +182,9 @@ func effectiveModelAliases(
 	}
 	// A configured id overrides a derived one. Also drop any derived alias
 	// pointing at a slug the config already publishes under a different id,
-	// so one model never appears twice in the picker.
+	// so one model never appears twice in the picker — except its [1m]
+	// twin, which is a genuinely different picker option (the 1M-context
+	// variant), not a duplicate of the configured entry.
 	configuredSlugs := make(map[string]bool, len(configured))
 	for _, slug := range configured {
 		configuredSlugs[slug] = true
@@ -143,7 +193,8 @@ func effectiveModelAliases(
 		if _, isConfigured := configured[id]; isConfigured {
 			continue
 		}
-		if configuredSlugs[slug] {
+		if configuredSlugs[slug] &&
+			!strings.HasSuffix(id, autoAliasOneMillionSuffix) {
 			delete(merged, id)
 		}
 	}

@@ -42,6 +42,45 @@ func TestFetchSferenceModels(t *testing.T) {
 	}
 }
 
+// A 1M-context model contributes two picker entries: the bare alias and its
+// [1m] twin. Without the twin Claude Code believes the model holds 200k
+// tokens and auto-compacts at ~180k, a fifth of the real window.
+func TestFetchSferenceModelsIncludesOneMillionTwin(t *testing.T) {
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"state":"ready","models":[
+			{"slug":"zai-org/GLM-5.3","display_name":"GLM 5.3","alias":"claude-sference-glm-5-3","alias_1m":"claude-sference-glm-5-3[1m]","available":true},
+			{"slug":"bottlecapai/ThinkingCap","display_name":"ThinkingCap","alias":"claude-sference-thinkingcap","available":true}
+		]}`)
+	}))
+	defer admin.Close()
+
+	models := fetchSferenceModels(strings.TrimPrefix(admin.URL, "http://"))
+	if len(models) != 3 {
+		t.Fatalf("got %d entries, want 3 (two for the 1M model): %+v", len(models), models)
+	}
+	byID := map[string]sferenceModelEntry{}
+	for _, m := range models {
+		byID[m.Model] = m
+	}
+	twin, ok := byID["claude-sference-glm-5-3[1m]"]
+	if !ok {
+		t.Fatalf("[1m] twin entry missing: %+v", byID)
+	}
+	if !strings.Contains(twin.Name, "1M") {
+		t.Errorf("twin name = %q, want the 1M variant marked", twin.Name)
+	}
+	if _, ok := byID["claude-sference-glm-5-3"]; !ok {
+		t.Errorf("bare alias entry missing: %+v", byID)
+	}
+	for id := range byID {
+		if strings.HasPrefix(id, "claude-sference-thinkingcap") &&
+			strings.HasSuffix(id, "[1m]") {
+			t.Errorf("model without alias_1m produced a twin entry %q", id)
+		}
+	}
+}
+
 func TestFetchSferenceModelsUnreachable(t *testing.T) {
 	models := fetchSferenceModels("127.0.0.1:1")
 	if models != nil {

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -9,20 +10,31 @@ import (
 
 // snapshotWithSferenceModels builds a pricing snapshot carrying the given
 // Sference slugs, the same way loadProviderCatalogCaches populates one from
-// the on-disk catalog cache at startup.
+// the on-disk catalog cache at startup. Context windows are absent, as
+// they are in the real cache.
 func snapshotWithSferenceModels(t *testing.T, slugs ...string) *pricing.Snapshot {
 	t.Helper()
-	p := pricing.New()
-	availability := make([]pricing.AvailabilityModel, 0, len(slugs))
+	models := make([]pricing.AvailabilityModel, 0, len(slugs))
 	for _, slug := range slugs {
-		availability = append(availability, pricing.AvailabilityModel{
+		models = append(models, pricing.AvailabilityModel{
 			CanonicalModelID: slug,
 			DisplayName:      slug,
 		})
 	}
+	return snapshotWithSferenceModelsWithContext(t, models...)
+}
+
+// snapshotWithSferenceModelsWithContext seeds availability with explicit
+// context windows so tests can exercise the [1m] twin derivation.
+func snapshotWithSferenceModelsWithContext(
+	t *testing.T,
+	models ...pricing.AvailabilityModel,
+) *pricing.Snapshot {
+	t.Helper()
+	p := pricing.New()
 	if err := p.ReplaceProviderAvailability(
 		pricing.ProviderSference,
-		availability,
+		models,
 		sferenceModelAPIsAvailabilitySource,
 		time.Now().UTC(),
 		"test",
@@ -146,6 +158,95 @@ func TestDeriveAutoAliasesUsesEmbeddedFallbackCatalog(t *testing.T) {
 	}
 }
 
+// A [1m] twin must satisfy the same predicates as the alias it decorates,
+// or the picker would drop it and config would have rejected it.
+func TestAutoAliasOneMillionIDSatisfiesConfigValidators(t *testing.T) {
+	base, ok := autoAliasID("zai-org/GLM-5.3")
+	if !ok {
+		t.Fatal("autoAliasID(\"zai-org/GLM-5.3\") returned ok=false")
+	}
+	twin, ok := autoAliasOneMillionID(base)
+	if !ok {
+		t.Fatal("autoAliasOneMillionID returned ok=false")
+	}
+	if twin != base+"[1m]" {
+		t.Errorf("twin = %q, want %q+[1m]", twin, base)
+	}
+	if !discoveryPrefixOK(twin) {
+		t.Errorf("twin id %q fails Claude Code's discovery filter", twin)
+	}
+	if reservedAnthropicModelRe.MatchString(twin) {
+		t.Errorf("twin id %q collides with a real Anthropic model name", twin)
+	}
+	if !InAliasNamespace(twin) {
+		t.Errorf("twin id %q is outside the gateway alias namespace", twin)
+	}
+	if _, ok := autoAliasOneMillionID(""); ok {
+		t.Error("autoAliasOneMillionID(\"\") returned ok=true")
+	}
+}
+
+// Only 1M-context models get a [1m] twin: on a smaller model the twin would
+// make Claude Code believe 1M tokens the model rejects.
+func TestDeriveAutoAliasesEmitsOneMillionTwins(t *testing.T) {
+	snapshot := snapshotWithSferenceModelsWithContext(t,
+		pricing.AvailabilityModel{
+			CanonicalModelID: "zai-org/GLM-5.3",
+			DisplayName:      "GLM 5.3",
+			ContextTokens:    1_048_576,
+		},
+		pricing.AvailabilityModel{
+			CanonicalModelID: "bottlecapai/ThinkingCap-Qwen3.6-27B",
+			DisplayName:      "ThinkingCap",
+			ContextTokens:    262_144,
+		},
+	)
+	derived := deriveAutoAliases(snapshot)
+	if derived["claude-sference-zai-org-glm-5-3[1m]"] != "zai-org/GLM-5.3" {
+		t.Errorf("1M model has no [1m] twin: %v", derived)
+	}
+	if _, present := derived["claude-sference-bottlecapai-thinkingcap-qwen3-6-27b[1m]"]; present {
+		t.Error("262k model published a [1m] twin")
+	}
+}
+
+// The live catalog fetch and on-disk cache carry no context_tokens today, so
+// the vendored modelmeta table is what real installs rely on: a known 1M
+// model with a context-less record still gets its twin, an unknown model
+// never does.
+func TestDeriveAutoAliasesTwinsUseVendoredContextTable(t *testing.T) {
+	snapshot := snapshotWithSferenceModels(t,
+		"zai-org/GLM-5.3",
+		"private-org/Brand-New-Model",
+	)
+	derived := deriveAutoAliases(snapshot)
+	if derived["claude-sference-zai-org-glm-5-3[1m]"] != "zai-org/GLM-5.3" {
+		t.Errorf("known 1M model without live context evidence has no twin: %v", derived)
+	}
+	if _, present := derived["claude-sference-private-org-brand-new-model[1m]"]; present {
+		t.Error("unknown model published a [1m] twin")
+	}
+}
+
+// A configured alias owns the slug's bare entry, but the [1m] twin is a
+// distinct picker option and must survive the duplicate suppression.
+func TestEffectiveModelAliasesKeepsTwinUnderConfiguredAlias(t *testing.T) {
+	snapshot := snapshotWithSferenceModels(t, "zai-org/GLM-5.3")
+	configured := map[string]string{"claude-sference-glm-53": "zai-org/GLM-5.3"}
+
+	merged := effectiveModelAliases(snapshot, configured)
+
+	if merged["claude-sference-glm-53"] != "zai-org/GLM-5.3" {
+		t.Errorf("configured alias lost: %v", merged)
+	}
+	if merged["claude-sference-zai-org-glm-5-3[1m]"] != "zai-org/GLM-5.3" {
+		t.Errorf("[1m] twin was suppressed under the configured alias: %v", merged)
+	}
+	if merged["claude-sference-zai-org-glm-5-3"] != "" {
+		t.Errorf("derived bare alias duplicates the configured entry: %v", merged)
+	}
+}
+
 // Existing installs must keep the exact ids they pinned.
 func TestEffectiveModelAliasesConfiguredWins(t *testing.T) {
 	snapshot := snapshotWithSferenceModels(t, "zai-org/GLM-5.2", "zai-org/GLM-5.3-Flash")
@@ -157,10 +258,12 @@ func TestEffectiveModelAliasesConfiguredWins(t *testing.T) {
 		t.Errorf("configured alias lost: %v", merged)
 	}
 	// The configured slug must not also appear under its derived id, or the
-	// picker would list one model twice.
+	// picker would list one model twice. Its [1m] twin is exempt: that is a
+	// distinct 1M-context option for the same model, not a duplicate.
 	count := 0
-	for _, slug := range merged {
-		if slug == "zai-org/GLM-5.2" {
+	for id, slug := range merged {
+		if slug == "zai-org/GLM-5.2" &&
+			!strings.HasSuffix(id, autoAliasOneMillionSuffix) {
 			count++
 		}
 	}
@@ -235,5 +338,57 @@ func TestModelCatalogAnnotatesDerivedAliases(t *testing.T) {
 		if model.Alias == "" {
 			t.Errorf("catalog model %q has no alias; the picker would skip it", model.Slug)
 		}
+	}
+}
+
+// The door reads alias_1m to inject the second picker entry, so the admin
+// endpoint must publish the twin alongside the bare alias — on the SAME row.
+// Rows stay one-per-slug: the app's projectModelCatalog dedupes by slug, so a
+// second row would be silently dropped there while doubling the model list
+// everywhere else.
+func TestModelCatalogPublishesOneMillionTwinAlias(t *testing.T) {
+	snapshot := snapshotWithSferenceModelsWithContext(t,
+		pricing.AvailabilityModel{
+			CanonicalModelID: "zai-org/GLM-5.3",
+			DisplayName:      "GLM 5.3",
+			ContextTokens:    1_048_576,
+		},
+		pricing.AvailabilityModel{
+			CanonicalModelID: "bottlecapai/ThinkingCap-Qwen3.6-27B",
+			DisplayName:      "ThinkingCap",
+			ContextTokens:    262_144,
+		},
+	)
+	g := &Gateway{pricing: pricing.New()}
+	g.activeConfigFile = nil
+
+	models := g.modelCatalogModelsFromSnapshot(snapshot, []modelCatalogModel{
+		{Slug: "zai-org/GLM-5.3"},
+		{Slug: "bottlecapai/ThinkingCap-Qwen3.6-27B"},
+	})
+
+	if len(models) != 2 {
+		t.Fatalf("rows = %d, want one per slug: %+v", len(models), models)
+	}
+	bySlug := map[string]modelCatalogModel{}
+	for _, model := range models {
+		if model.Alias == "" {
+			t.Errorf("catalog row %q has no alias; the picker would skip it", model.Slug)
+		}
+		if strings.HasSuffix(model.Alias, autoAliasOneMillionSuffix) {
+			t.Errorf("row %q published the [1m] twin as its primary alias %q",
+				model.Slug, model.Alias)
+		}
+		bySlug[model.Slug] = model
+	}
+	oneMillion := bySlug["zai-org/GLM-5.3"]
+	if oneMillion.Alias != "claude-sference-zai-org-glm-5-3" {
+		t.Errorf("bare alias = %q", oneMillion.Alias)
+	}
+	if oneMillion.AliasOneMillion != "claude-sference-zai-org-glm-5-3[1m]" {
+		t.Errorf("alias_1m = %q, want the [1m] twin", oneMillion.AliasOneMillion)
+	}
+	if smaller := bySlug["bottlecapai/ThinkingCap-Qwen3.6-27B"]; smaller.AliasOneMillion != "" {
+		t.Errorf("262k model published alias_1m = %q, want empty", smaller.AliasOneMillion)
 	}
 }

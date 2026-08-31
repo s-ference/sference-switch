@@ -609,10 +609,11 @@ func fetchSferenceModels(adminTarget string) []sferenceModelEntry {
 	var catalog struct {
 		State  string `json:"state"`
 		Models []struct {
-			Slug        string `json:"slug"`
-			DisplayName string `json:"display_name"`
-			Alias       string `json:"alias"`
-			Available   bool   `json:"available"`
+			Slug            string `json:"slug"`
+			DisplayName     string `json:"display_name"`
+			Alias           string `json:"alias"`
+			AliasOneMillion string `json:"alias_1m"`
+			Available       bool   `json:"available"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(body, &catalog); err != nil {
@@ -636,6 +637,20 @@ func fetchSferenceModels(adminTarget string) []sferenceModelEntry {
 			Description:    "Sference inference — " + m.Slug,
 			DisabledReason: nil,
 		})
+		// A 1M-context model also gets its [1m] twin as a separate picker
+		// option. Claude Code believes an unrecognized model holds 200k
+		// tokens and auto-compacts against that; the [1m] decoration is
+		// how it is told the model really holds 1M. Both entries route to
+		// the same slug — the suffix is context selection, not identity.
+		if m.AliasOneMillion != "" {
+			out = append(out, sferenceModelEntry{
+				Model:          m.AliasOneMillion,
+				Name:           "[Sference] " + name + " (1M context)",
+				Description:    "Sference inference — " + m.Slug + " with a 1M-token context window",
+				DisabledReason: nil,
+			})
+			bootstrapLog.log("fetch: added 1M twin %s", m.AliasOneMillion)
+		}
 	}
 	bootstrapLog.log("fetch: returning %d entries", len(out))
 	return out

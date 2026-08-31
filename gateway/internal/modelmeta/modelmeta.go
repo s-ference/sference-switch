@@ -20,6 +20,48 @@ func ResolveSference(modelID string) Model {
 	}
 }
 
+// sferenceOneMillionContext lists Sference model leaves known to accept a
+// 1M-token context window (platform production catalog, verified
+// 2026-08-29). Everything else Sference serves is 256k or below, and the
+// gateway's [1m] picker twin is only ever minted for these — a twin on a
+// smaller model would make Claude Code believe 1M tokens the model
+// rejects.
+var sferenceOneMillionContext = map[string]bool{
+	"glm-5.2":                true,
+	"glm-5-2":                true,
+	"glm-5.3":                true,
+	"glm-5-3":                true,
+	"glm-5.3-flash":          true,
+	"glm-5-3-flash":          true,
+	"kimi-k3":                true,
+	"minimax-m3":             true,
+	"deepseek-v4-pro":        true,
+	"deepseek-v4-flash":      true,
+	"deepseek-v4-flash-0731": true,
+}
+
+// SferenceContextTokens returns the vendored context window for a Sference
+// model id, 0 when the leaf is unknown. Unknown means unknown — callers
+// must treat 0 as "do not assume a large window", never as a small one.
+func SferenceContextTokens(modelID string) int64 {
+	if sferenceOneMillionContext[sferenceLeafKey(modelID)] {
+		return 1_048_576
+	}
+	return 0
+}
+
+// sferenceLeafKey extracts the normalized leaf of a Sference model id:
+// lowercased, trimmed, underscores folded to dashes ("zai-org/GLM-5.3"
+// and "zai-org/GLM_5_3" share one key).
+func sferenceLeafKey(modelID string) string {
+	leaf := modelID
+	if slash := strings.LastIndex(leaf, "/"); slash >= 0 {
+		leaf = leaf[slash+1:]
+	}
+	knownKey := strings.ToLower(strings.TrimSpace(leaf))
+	return strings.ReplaceAll(knownKey, "_", "-")
+}
+
 // ResolveClaudeFamily normalizes Claude traffic to a family identity. The
 // recorded family wins when it is recognized; requestedModel is the fallback.
 func ResolveClaudeFamily(recordedFamily, requestedModel string) Model {
@@ -38,8 +80,7 @@ func sferenceDisplayName(modelID string) string {
 	if slash := strings.LastIndex(leaf, "/"); slash >= 0 {
 		leaf = leaf[slash+1:]
 	}
-	knownKey := strings.ToLower(strings.TrimSpace(leaf))
-	knownKey = strings.ReplaceAll(knownKey, "_", "-")
+	knownKey := sferenceLeafKey(modelID)
 	switch knownKey {
 	case "glm-5.2", "glm-5-2":
 		return "GLM 5.2"

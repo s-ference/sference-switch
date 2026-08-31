@@ -20,6 +20,28 @@ func TestResolveSferenceKnownDisplayNames(t *testing.T) {
 	}
 }
 
+// The [1m] picker-twin gate reads this table: only models known to accept
+// a 1M window may resolve above 0, and unknown leaves must stay 0 so a
+// twin is never minted for a model we cannot vouch for.
+func TestSferenceContextTokens(t *testing.T) {
+	tests := map[string]int64{
+		"zai-org/GLM-5.3":                     1_048_576,
+		"zai-org/GLM_5_3":                     1_048_576,
+		"zai-org/GLM-5.3-Flash":               1_048_576,
+		"moonshotai/Kimi-K3":                  1_048_576,
+		"deepseek-ai/DeepSeek-V4-Flash":       1_048_576,
+		"bottlecapai/ThinkingCap-Qwen3.6-27B": 0,
+		"Qwen/Qwen3.6-35B-A3B":                0,
+		"private-org/Future-Model":            0,
+		"":                                    0,
+	}
+	for modelID, want := range tests {
+		if got := SferenceContextTokens(modelID); got != want {
+			t.Errorf("SferenceContextTokens(%q) = %d, want %d", modelID, got, want)
+		}
+	}
+}
+
 func TestResolveSferenceHumanizesUnknownLeaf(t *testing.T) {
 	got := ResolveSference("private-org/my__new---model\tv1")
 	if got.ID != "private-org/my__new---model\tv1" ||
