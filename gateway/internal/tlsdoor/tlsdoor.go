@@ -622,6 +622,11 @@ func fetchSferenceModels(adminTarget string) []sferenceModelEntry {
 	}
 	bootstrapLog.log("fetch: state=%s models=%d", catalog.State, len(catalog.Models))
 	out := make([]sferenceModelEntry, 0, len(catalog.Models))
+	// One picker entry per model. A 1M-context model (alias_1m set)
+	// publishes only its [1m] id: Claude Code believes an undecorated id
+	// holds 200k tokens and auto-compacts against that, so a bare entry
+	// would offer the model at a fifth of its real window. The bare alias
+	// stays routable at the router; it is just not listed.
 	for _, m := range catalog.Models {
 		if !m.Available || m.Alias == "" {
 			bootstrapLog.log("fetch: skipping unavailable/no-alias: slug=%s alias=%s available=%v", m.Slug, m.Alias, m.Available)
@@ -631,26 +636,21 @@ func fetchSferenceModels(adminTarget string) []sferenceModelEntry {
 		if name == "" {
 			name = m.Slug
 		}
+		model := m.Alias
+		entryName := "[Sference] " + name
+		description := "Sference inference — " + m.Slug
+		if m.AliasOneMillion != "" {
+			model = m.AliasOneMillion
+			entryName += " (1M context)"
+			description += " with a 1M-token context window"
+			bootstrapLog.log("fetch: publishing 1M entry %s", model)
+		}
 		out = append(out, sferenceModelEntry{
-			Model:          m.Alias,
-			Name:           "[Sference] " + name,
-			Description:    "Sference inference — " + m.Slug,
+			Model:          model,
+			Name:           entryName,
+			Description:    description,
 			DisabledReason: nil,
 		})
-		// A 1M-context model also gets its [1m] twin as a separate picker
-		// option. Claude Code believes an unrecognized model holds 200k
-		// tokens and auto-compacts against that; the [1m] decoration is
-		// how it is told the model really holds 1M. Both entries route to
-		// the same slug — the suffix is context selection, not identity.
-		if m.AliasOneMillion != "" {
-			out = append(out, sferenceModelEntry{
-				Model:          m.AliasOneMillion,
-				Name:           "[Sference] " + name + " (1M context)",
-				Description:    "Sference inference — " + m.Slug + " with a 1M-token context window",
-				DisabledReason: nil,
-			})
-			bootstrapLog.log("fetch: added 1M twin %s", m.AliasOneMillion)
-		}
 	}
 	bootstrapLog.log("fetch: returning %d entries", len(out))
 	return out

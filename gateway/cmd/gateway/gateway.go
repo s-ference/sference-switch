@@ -1286,7 +1286,18 @@ const aliasModelCreatedAt = "2026-07-07T00:00:00Z"
 // model_aliases in the Anthropic list-entry shape, sorted by alias id
 // for stable ordering. display_name is populated but the picker does
 // not render it (validated 2026-07-07): the alias id IS the UX.
+//
+// A 1M-context model publishes only its [1m] id. Claude Code believes an
+// undecorated id holds 200k tokens and auto-compacts against that — a bare
+// entry would offer the model at a fifth of its real window. The bare id
+// stays in the alias map and keeps routing; it is only hidden here.
 func aliasModelEntries(aliases map[string]string) []map[string]any {
+	oneMillionSlugs := map[string]bool{}
+	for id, slug := range aliases {
+		if strings.HasSuffix(id, autoAliasOneMillionSuffix) {
+			oneMillionSlugs[slug] = true
+		}
+	}
 	ids := make([]string, 0, len(aliases))
 	for id := range aliases {
 		ids = append(ids, id)
@@ -1294,6 +1305,9 @@ func aliasModelEntries(aliases map[string]string) []map[string]any {
 	out := make([]map[string]any, 0, len(ids))
 	for _, id := range sortedKeys(ids) {
 		slug := aliases[id]
+		if oneMillionSlugs[slug] && !strings.HasSuffix(id, autoAliasOneMillionSuffix) {
+			continue
+		}
 		short := slug
 		if i := strings.LastIndex(slug, "/"); i >= 0 {
 			short = slug[i+1:]

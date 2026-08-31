@@ -100,7 +100,10 @@ func TestAliasModelsSynthesisServedLocally(t *testing.T) {
 			if !sort.StringsAreSorted(ids) {
 				t.Fatalf("alias order is not sorted by id: %+v", ids)
 			}
-			for _, want := range []string{"anthropic-sference-kimi", "claude-sference-glm-5-2"} {
+			// The configured GLM-5.2 alias is a 1M-context model, so the
+			// picker lists only its [1m] id; the configured bare id stays
+			// routable but is not published.
+			for _, want := range []string{"anthropic-sference-kimi", "claude-sference-zai-org-glm-5-2[1m]"} {
 				found := false
 				for _, id := range ids {
 					if id == want {

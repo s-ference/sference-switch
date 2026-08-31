@@ -292,6 +292,42 @@ func TestEffectiveModelAliasesFallsBackToConfigured(t *testing.T) {
 	}
 }
 
+// A 1M model lists once, as its [1m] id — the bare entry would offer the
+// model at a fifth of its real window. The bare id stays routable; this is a
+// publish-layer filter only.
+func TestAliasModelEntriesPublishesOnlyOneMillionFor1MModels(t *testing.T) {
+	snapshot := snapshotWithSferenceModelsWithContext(t,
+		pricing.AvailabilityModel{
+			CanonicalModelID: "zai-org/GLM-5.3",
+			DisplayName:      "GLM 5.3",
+			ContextTokens:    1_048_576,
+		},
+		pricing.AvailabilityModel{
+			CanonicalModelID: "bottlecapai/ThinkingCap-Qwen3.6-27B",
+			DisplayName:      "ThinkingCap",
+			ContextTokens:    262_144,
+		},
+	)
+	aliases := effectiveModelAliases(snapshot, nil)
+	published := map[string]bool{}
+	for _, entry := range aliasModelEntries(aliases) {
+		id, _ := entry["id"].(string)
+		published[id] = true
+	}
+	if !published["claude-sference-zai-org-glm-5-3[1m]"] {
+		t.Errorf("1M model's [1m] id not published: %v", published)
+	}
+	if published["claude-sference-zai-org-glm-5-3"] {
+		t.Errorf("bare id of a 1M model published alongside its [1m] id: %v", published)
+	}
+	if !published["claude-sference-bottlecapai-thinkingcap-qwen3-6-27b"] {
+		t.Errorf("sub-1M model's bare id not published: %v", published)
+	}
+	if _, twin := published["claude-sference-bottlecapai-thinkingcap-qwen3-6-27b[1m]"]; twin {
+		t.Errorf("262k model published a [1m] id: %v", published)
+	}
+}
+
 // The load-bearing invariant: everything published to the picker must resolve
 // on the request path. A picker entry that cannot route is worse than absent.
 func TestEveryPublishedAliasResolves(t *testing.T) {

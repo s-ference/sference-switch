@@ -42,10 +42,11 @@ func TestFetchSferenceModels(t *testing.T) {
 	}
 }
 
-// A 1M-context model contributes two picker entries: the bare alias and its
-// [1m] twin. Without the twin Claude Code believes the model holds 200k
-// tokens and auto-compacts at ~180k, a fifth of the real window.
-func TestFetchSferenceModelsIncludesOneMillionTwin(t *testing.T) {
+// A 1M-context model publishes ONLY its [1m] entry: Claude Code believes an
+// undecorated id holds 200k tokens, so listing both would offer the model at
+// a fifth of its real window right next to the full one. Sub-1M models keep
+// their bare alias.
+func TestFetchSferenceModelsPrefersOneMillionEntry(t *testing.T) {
 	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"state":"ready","models":[
@@ -56,28 +57,29 @@ func TestFetchSferenceModelsIncludesOneMillionTwin(t *testing.T) {
 	defer admin.Close()
 
 	models := fetchSferenceModels(strings.TrimPrefix(admin.URL, "http://"))
-	if len(models) != 3 {
-		t.Fatalf("got %d entries, want 3 (two for the 1M model): %+v", len(models), models)
+	if len(models) != 2 {
+		t.Fatalf("got %d entries, want 2 (one per model): %+v", len(models), models)
 	}
 	byID := map[string]sferenceModelEntry{}
 	for _, m := range models {
+		if _, duplicate := byID[m.Model]; duplicate {
+			t.Errorf("model %q published twice", m.Model)
+		}
 		byID[m.Model] = m
 	}
-	twin, ok := byID["claude-sference-glm-5-3[1m]"]
+	glm, ok := byID["claude-sference-glm-5-3[1m]"]
 	if !ok {
-		t.Fatalf("[1m] twin entry missing: %+v", byID)
+		t.Fatalf("[1m] entry missing, bare %q must not be listed instead: %+v",
+			"claude-sference-glm-5-3", byID)
 	}
-	if !strings.Contains(twin.Name, "1M") {
-		t.Errorf("twin name = %q, want the 1M variant marked", twin.Name)
+	if _, bareListed := byID["claude-sference-glm-5-3"]; bareListed {
+		t.Error("bare alias of a 1M model is listed alongside its [1m] entry")
 	}
-	if _, ok := byID["claude-sference-glm-5-3"]; !ok {
-		t.Errorf("bare alias entry missing: %+v", byID)
+	if !strings.Contains(glm.Name, "1M") {
+		t.Errorf("1M entry name = %q, want the 1M variant marked", glm.Name)
 	}
-	for id := range byID {
-		if strings.HasPrefix(id, "claude-sference-thinkingcap") &&
-			strings.HasSuffix(id, "[1m]") {
-			t.Errorf("model without alias_1m produced a twin entry %q", id)
-		}
+	if _, ok := byID["claude-sference-thinkingcap"]; !ok {
+		t.Errorf("sub-1M bare alias missing: %+v", byID)
 	}
 }
 
