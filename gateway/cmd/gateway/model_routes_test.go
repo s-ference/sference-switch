@@ -334,6 +334,59 @@ func TestModelRouteSuffixedIDMatching(t *testing.T) {
 	}
 }
 
+// TestModelRoutePublishedOneMillionIDResolvesWithConfiguredAlias is the
+// regression for the v0.1.4 break: when a slug already has a configured
+// alias, duplicate suppression drops the DERIVED bare id and publishes only
+// the [1m] twin. Resolving by the normalized id then looked up a key that
+// does not exist, so every such model 400'd straight from the picker
+// ("unknown gateway model claude-sference-moonshotai-kimi-k3"). The exact
+// published id must resolve.
+func TestModelRoutePublishedOneMillionIDResolvesWithConfiguredAlias(t *testing.T) {
+	gotModel := make(chan string, 2)
+	basSrv := recordingStub(t, gotModel, "VIA-SFERENCE")
+	defer basSrv.Close()
+	antSrv := recordingStub(t, gotModel, "VIA-ANTHROPIC")
+	defer antSrv.Close()
+	cfg := testConfig(t, basSrv.URL, antSrv.URL)
+	rc := modelRoutesClient(t, "sference", nil)
+	// Exactly the shipped gateway.yaml shape: a hand-written short alias for
+	// a 1M-context slug.
+	rc.ModelAliases = map[string]string{
+		"claude-sference-kimi-k3": "moonshotai/Kimi-K3",
+	}
+	g, adminL, _ := newGateway(t, cfg, rc)
+	defer adminL.Close()
+	stop := start(t, g)
+	defer stop()
+
+	// The id the picker actually publishes for this model.
+	published := ""
+	for id, slug := range effectiveModelAliases(
+		g.pricing.Capture(), rc.ModelAliases,
+	) {
+		if slug == "moonshotai/Kimi-K3" &&
+			strings.HasSuffix(id, autoAliasOneMillionSuffix) {
+			published = id
+		}
+	}
+	if published == "" {
+		t.Fatal("no [1m] id published for a 1M-context configured slug")
+	}
+
+	resp, rb := postModelMessages(t, g, published, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("published picker id %q got %d: %s", published, resp.StatusCode, rb)
+	}
+	select {
+	case m := <-gotModel:
+		if m != "moonshotai/Kimi-K3" {
+			t.Fatalf("upstream got model %q, want the bare slug", m)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream never received the request")
+	}
+}
+
 // TestModelRouteOneMillionAliasResolves asserts the request-path half of the
 // [1m] picker twin: Claude Code sends the decorated id it was given, and the
 // gateway must route it to the same slug as the bare alias. The decoration is

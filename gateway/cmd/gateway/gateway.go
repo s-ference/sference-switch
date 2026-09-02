@@ -2271,11 +2271,20 @@ func (g *Gateway) resolveExplicitModelAttemptWithSnapshot(
 		return upstreamAttempt{}, false, nil
 	} else {
 		// Resolve against the same union the picker publishes, so a derived
-		// entry a user selects in /model routes instead of erroring. The
-		// lookup uses the normalized id, so a [1m] twin resolves to the same
-		// slug as its bare alias.
+		// entry a user selects in /model routes instead of erroring.
+		//
+		// The exact id is tried FIRST, because a published [1m] id is a real
+		// key in the union and its bare form may not be: when a slug already
+		// has a configured alias, duplicate suppression drops the derived
+		// bare id and keeps only the twin. Normalizing before lookup made
+		// every such model unroutable from the picker (claude-sference-
+		// moonshotai-kimi-k3[1m] -> ...kimi-k3, which is not a key). The
+		// normalized retry still covers a [1m] decoration typed onto an
+		// undecorated alias.
 		effective := effectiveModelAliases(snapshot, cl.cfg.ModelAliases)
 		switch {
+		case effective[requested] != "":
+			target = effective[requested]
 		case effective[normalized] != "":
 			target = effective[normalized]
 		case InAliasNamespace(requested):
