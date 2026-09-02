@@ -695,6 +695,28 @@ private struct RoutingOverviewView: View {
                 Label("Overview", systemImage: "switch.2")
                     .font(.title2.weight(.semibold))
 
+                // Version line: the running router build and the on-disk
+                // CLI build, the same pairing the menubar popup's System
+                // section shows. They diverge after `sference-switch
+                // upgrade` until the router restarts, so surfacing both
+                // here makes the skew (and the resulting "restart to
+                // adopt") visible without running `sference-switch status`.
+                Text(versionsLabel(
+                    routerVersion: state.routerVersion,
+                    cliVersion: state.cliVersion))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("overview-version")
+
+                if let skew = versionSkewNote(
+                    routerVersion: state.routerVersion,
+                    cliVersion: state.cliVersion) {
+                    Label(skew, systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("overview-version-skew")
+                }
+
                 // An available update leads the page: it is the one item
                 // here that expires, and burying it under the status card
                 // meant scrolling past everything else to find it.
