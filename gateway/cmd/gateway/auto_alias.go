@@ -180,11 +180,21 @@ func effectiveModelAliases(
 	for id, slug := range derived {
 		merged[id] = slug
 	}
-	// A configured id overrides a derived one. Also drop any derived alias
-	// pointing at a slug the config already publishes under a different id,
-	// so one model never appears twice in the picker — except its [1m]
-	// twin, which is a genuinely different picker option (the 1M-context
-	// variant), not a duplicate of the configured entry.
+	// Slugs with a [1m] twin keep every derived id in the union, including
+	// the bare one. Claude Code treats [1m] as a client-side context
+	// selection and strips it before building the request, so picking the
+	// twin in /model sends the BARE id — the union must route it or the
+	// pick 400s. The picker stays single-entry regardless: aliasModelEntries
+	// publishes only the twin for these slugs, hiding every bare id.
+	oneMillionSlugs := make(map[string]bool)
+	for id, slug := range derived {
+		if strings.HasSuffix(id, autoAliasOneMillionSuffix) {
+			oneMillionSlugs[slug] = true
+		}
+	}
+	// For every other slug, drop any derived alias pointing at a slug the
+	// config already publishes under a different id, so one model never
+	// appears twice in the picker.
 	configuredSlugs := make(map[string]bool, len(configured))
 	for _, slug := range configured {
 		configuredSlugs[slug] = true
@@ -193,8 +203,7 @@ func effectiveModelAliases(
 		if _, isConfigured := configured[id]; isConfigured {
 			continue
 		}
-		if configuredSlugs[slug] &&
-			!strings.HasSuffix(id, autoAliasOneMillionSuffix) {
+		if configuredSlugs[slug] && !oneMillionSlugs[slug] {
 			delete(merged, id)
 		}
 	}

@@ -334,6 +334,50 @@ func TestModelRouteSuffixedIDMatching(t *testing.T) {
 	}
 }
 
+// TestModelRouteStrippedOneMillionPickRoutes is the regression for the bug
+// v0.1.5 shipped past: Claude Code treats [1m] as a client-side context
+// selection and strips it before building the request, so selecting
+// "[Sference] Kimi K3 (1M context)" in /model sends the BARE derived id —
+// not the decorated one. When the slug also has a configured alias, the
+// configured-alias suppression had deleted that bare id from the union, and
+// the pick 400'd (`unknown gateway model
+// "claude-sference-moonshotai-kimi-k3"`). The union must route the bare id
+// the real client actually sends.
+func TestModelRouteStrippedOneMillionPickRoutes(t *testing.T) {
+	gotModel := make(chan string, 2)
+	basSrv := recordingStub(t, gotModel, "VIA-SFERENCE")
+	defer basSrv.Close()
+	antSrv := recordingStub(t, gotModel, "VIA-ANTHROPIC")
+	defer antSrv.Close()
+	cfg := testConfig(t, basSrv.URL, antSrv.URL)
+	rc := modelRoutesClient(t, "sference", nil)
+	// The shipped gateway.yaml shape: a hand-written short alias for a
+	// 1M-context slug. The picker then publishes only the [1m] twin, and
+	// Claude Code sends this request with the twin's stripped (bare) id.
+	rc.ModelAliases = map[string]string{
+		"claude-sference-kimi-k3": "moonshotai/Kimi-K3",
+	}
+	g, adminL, _ := newGateway(t, cfg, rc)
+	defer adminL.Close()
+	stop := start(t, g)
+	defer stop()
+
+	resp, rb := postModelMessages(
+		t, g, "claude-sference-moonshotai-kimi-k3", "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("bare id of a published [1m] pick got %d: %s",
+			resp.StatusCode, rb)
+	}
+	select {
+	case m := <-gotModel:
+		if m != "moonshotai/Kimi-K3" {
+			t.Fatalf("upstream got model %q, want the bare slug", m)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream never received the request")
+	}
+}
+
 // TestModelRoutePublishedOneMillionIDResolvesWithConfiguredAlias is the
 // regression for the v0.1.4 break: when a slug already has a configured
 // alias, duplicate suppression drops the DERIVED bare id and publishes only
