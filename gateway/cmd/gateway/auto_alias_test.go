@@ -228,9 +228,11 @@ func TestDeriveAutoAliasesTwinsUseVendoredContextTable(t *testing.T) {
 	}
 }
 
-// A configured alias owns the slug's bare entry, but the [1m] twin is a
-// distinct picker option and must survive the duplicate suppression.
-func TestEffectiveModelAliasesKeepsTwinUnderConfiguredAlias(t *testing.T) {
+// A configured alias owns the slug's hand-written id, but a slug with a [1m]
+// twin keeps ALL its derived ids in the union: Claude Code strips the [1m]
+// decoration client-side and sends the bare id, so routing needs it even
+// though the picker publishes only the twin.
+func TestEffectiveModelAliasesKeepsDerivedIdsUnderConfiguredAlias(t *testing.T) {
 	snapshot := snapshotWithSferenceModels(t, "zai-org/GLM-5.3")
 	configured := map[string]string{"claude-sference-glm-53": "zai-org/GLM-5.3"}
 
@@ -239,11 +241,25 @@ func TestEffectiveModelAliasesKeepsTwinUnderConfiguredAlias(t *testing.T) {
 	if merged["claude-sference-glm-53"] != "zai-org/GLM-5.3" {
 		t.Errorf("configured alias lost: %v", merged)
 	}
+	if merged["claude-sference-zai-org-glm-5-3"] != "zai-org/GLM-5.3" {
+		t.Errorf("derived bare id missing — the id a real [1m] pick sends: %v", merged)
+	}
 	if merged["claude-sference-zai-org-glm-5-3[1m]"] != "zai-org/GLM-5.3" {
 		t.Errorf("[1m] twin was suppressed under the configured alias: %v", merged)
 	}
-	if merged["claude-sference-zai-org-glm-5-3"] != "" {
-		t.Errorf("derived bare alias duplicates the configured entry: %v", merged)
+	// The picker still shows ONE entry for the slug: the publish filter
+	// hides every bare id of a twin-owning slug.
+	entries := aliasModelEntries(merged)
+	ids := map[string]bool{}
+	for _, entry := range entries {
+		id, _ := entry["id"].(string)
+		ids[id] = true
+	}
+	if !ids["claude-sference-zai-org-glm-5-3[1m]"] {
+		t.Errorf("twin not published: %v", ids)
+	}
+	if ids["claude-sference-glm-53"] || ids["claude-sference-zai-org-glm-5-3"] {
+		t.Errorf("bare ids of a twin-owning slug published: %v", ids)
 	}
 }
 
@@ -257,18 +273,21 @@ func TestEffectiveModelAliasesConfiguredWins(t *testing.T) {
 	if merged["claude-sference-glm-5-2"] != "zai-org/GLM-5.2" {
 		t.Errorf("configured alias lost: %v", merged)
 	}
-	// The configured slug must not also appear under its derived id, or the
-	// picker would list one model twice. Its [1m] twin is exempt: that is a
-	// distinct 1M-context option for the same model, not a duplicate.
-	count := 0
-	for id, slug := range merged {
-		if slug == "zai-org/GLM-5.2" &&
-			!strings.HasSuffix(id, autoAliasOneMillionSuffix) {
-			count++
+	// The configured slug must appear exactly once in what the PICKER
+	// publishes. The union itself keeps the derived bare id alongside the
+	// configured one (Claude Code sends the bare id after stripping [1m]
+	// client-side), so deduplication happens at the publish layer: only the
+	// [1m] twin of a twin-owning slug is listed.
+	publishedForSlug := 0
+	for _, entry := range aliasModelEntries(merged) {
+		id, _ := entry["id"].(string)
+		if merged[id] == "zai-org/GLM-5.2" {
+			publishedForSlug++
 		}
 	}
-	if count != 1 {
-		t.Errorf("slug zai-org/GLM-5.2 published %d times, want 1: %v", count, merged)
+	if publishedForSlug != 1 {
+		t.Errorf("slug zai-org/GLM-5.2 published %d times, want 1: %v",
+			publishedForSlug, merged)
 	}
 	// The unconfigured catalog model is still picked up.
 	found := false
