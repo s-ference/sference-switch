@@ -234,6 +234,11 @@ func cmdUp(args []string) int {
 		fmt.Fprintf(os.Stderr, "door: not configured (no door: section in %s); skipping\n", lc.path)
 	}
 	failures += upMenubar()
+	// The root daemon is last: it needs the binary already in place, and
+	// its kickstart may prompt for the admin password. Advisory by design
+	// — routing is up by this point; a declined prompt leaves only the
+	// picker injection stale, with the fix printed.
+	adoptTLSDoor()
 
 	fmt.Fprintln(os.Stderr, "")
 	rc := printStatus(lc, os.Stdout, false)

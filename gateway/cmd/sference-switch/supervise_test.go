@@ -806,6 +806,10 @@ func TestUpSupervisedLabelVanishes(t *testing.T) {
 // answers health.
 func TestCmdRestartSupervisedRebootstrapsOnce(t *testing.T) {
 	f := useFake(t)
+	// Root-daemon adoption is env-gated off: this test drives cmdUp for
+	// real and a developer machine with a stale tlsdoor must not get an
+	// osascript password prompt mid-run.
+	t.Setenv("SFERENCE_SWITCH_TLS_DOOR", "off")
 	adminAddr := closedPortAddr(t)
 	cfg := filepath.Join(t.TempDir(), "gateway.yaml")
 	if err := os.WriteFile(cfg, []byte("clients: []\n"), 0o644); err != nil {

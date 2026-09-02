@@ -304,8 +304,12 @@ updown() {
     # SFERENCE_SWITCH_MENUBAR=off: likewise, the gate must never quit or relaunch
     # the user's real menubar app (the up/down menubar step is covered
     # by unit tests over the runCmd seam).
+    # SFERENCE_SWITCH_TLS_DOOR=off: likewise, up must never kickstart the
+    # root tlsdoor daemon, which would raise the admin password prompt
+    # (adoption is covered by unit tests over the seam vars).
     env SFERENCE_SWITCH_LAUNCHD=off \
         SFERENCE_SWITCH_MENUBAR=off \
+        SFERENCE_SWITCH_TLS_DOOR=off \
         SFERENCE_SWITCH_CONFIG_PATH="$UP_DIR/gateway.yaml" \
         SFERENCE_SWITCH_ENV_FILE="$UP_DIR/nonexistent.env" \
         SFERENCE_SWITCH_ADMIN_ADDR="127.0.0.1:$UPDOWN_ADMIN_PORT" \

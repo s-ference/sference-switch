@@ -132,6 +132,10 @@ func upEnv(t *testing.T, adminAddr, doorAddr, clientAddr string) (gwPf, doorPf s
 	t.Setenv("SFERENCE_SWITCH_DOOR_PIDFILE", doorPf)
 	t.Setenv("SFERENCE_SWITCH_GATEWAY_LOG", filepath.Join(dir, "router.log"))
 	t.Setenv("SFERENCE_SWITCH_DOOR_LOG", filepath.Join(dir, "door.log"))
+	// The root-daemon adoption is env-gated off for tests, mirroring the
+	// LAUNCHD/MENUBAR gates: without this a developer machine with a stale
+	// tlsdoor would get an osascript password prompt mid-`go test`.
+	t.Setenv("SFERENCE_SWITCH_TLS_DOOR", "off")
 	return gwPf, doorPf
 }
 
