@@ -11,16 +11,18 @@ and installs the CLI and menubar app:
 curl -fsSL https://get.sference.com | sh
 ```
 
-Then set up and start:
+Then open the app. Everything you need is in the UI: sign in (the app runs the
+browser device flow), turn the **Switch** on (one macOS password prompt to
+install the root TLS service and edit `/etc/hosts`), and pick a `[Sference]`
+model in Claude Code's `/model`.
+
+The same steps from a terminal (for scripting / headless machines):
 
 ```sh
-sference-switch setup
-sference-switch tls setup
-sudo sference-switch tls install
-sudo sference-switch tls service install
-sudo sference-switch intercept on
+sference-switch auth login
 sference-switch up
-sference-switch doctor --probe
+sference-switch setup
+sudo sference-switch intercept on
 ```
 
 ## Direct release asset
