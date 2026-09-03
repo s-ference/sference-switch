@@ -31,18 +31,9 @@ Then open the app and do three things — no terminal commands needed:
 3. **Pick a model.** In Claude Code, `/model` lists `[Sference]` entries.
    Choose the `… (1M context)` variant of a 1M model to use its full window.
 
-The CLI covers the same ground for scripting and headless machines — every
-step above has a command equivalent that the app calls internally when you
-toggle:
-
-```sh
-sference-switch auth login          # or: auth login --api-key 'sk_...'
-sference-switch up                 # start the router
-sference-switch setup              # install & bootstrap the root TLS door
-sudo sference-switch intercept on  # write the /etc/hosts redirect
-```
-
-The app is the primary interface; you do not need to run these by hand.
+The app is the primary interface; the equivalent terminal commands, for
+scripting and headless machines, are collected in the
+[command-line reference](#command-line-reference).
 
 ## Authentication
 
@@ -54,17 +45,8 @@ switch's own file, separate from the `sference` CLI's — and the gateway
 refreshes it automatically. The app surfaces "reauthentication required" when
 the credential expires.
 
-The same login from a terminal (for scripting or headless setups):
-
-```sh
-sference-switch auth login
-```
-
-A static API key also works and never expires:
-
-```sh
-sference-switch auth login --api-key 'sk_...'
-```
+A static API key also works and never expires — see
+[Command-line reference](#command-line-reference).
 
 If the `sference` CLI is signed in (`sference auth login`), the switch can
 also read that credential from `~/.sference/credentials.json` as a fallback.
@@ -332,6 +314,40 @@ See [config/schema.md](config/schema.md) for every field and
 shape. Store API-key overrides in
 `~/.sference/switch/env`, which must use mode `0600`, rather than in
 `gateway.yaml`.
+
+## Command-line reference
+
+The app is the primary interface and drives every command below when you use
+its controls. These are the same steps for scripting, headless machines, and
+diagnostics.
+
+**Sign in** (the app's Account card runs this):
+
+```sh
+sference-switch auth login                 # browser device flow
+sference-switch auth login --api-key 'sk_...'   # static API key, never expires
+```
+
+**Set up and start** (the app's **Switch** toggle runs the privileged half):
+
+```sh
+sference-switch up                         # start the router
+sference-switch setup                      # install & bootstrap the root TLS service
+sudo sference-switch intercept on          # write the /etc/hosts redirect
+```
+
+**Route and inspect:**
+
+```sh
+sference-switch on
+sference-switch off
+sference-switch claude status
+sference-switch doctor --probe
+```
+
+Other useful commands appear in the [Claude Code](#claude-code),
+[Codex CLI](#codex-cli), [Status and troubleshooting](#status-and-troubleshooting),
+[Upgrade](#upgrade), and [Uninstall](#uninstall) sections.
 
 ## Build and test
 
