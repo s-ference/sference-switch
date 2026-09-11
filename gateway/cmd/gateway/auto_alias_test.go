@@ -447,3 +447,42 @@ func TestModelCatalogPublishesOneMillionTwinAlias(t *testing.T) {
 		t.Errorf("262k model published alias_1m = %q, want empty", smaller.AliasOneMillion)
 	}
 }
+
+// A model freshly released on the platform — one NOT in the vendored
+// modelmeta table — gets a [1m] twin when its /v1/models row carries
+// context_tokens. This is the regression guard for the live-context fix:
+// a newly released 1M model must not require a vendored-table edit each
+// time (the DeepSeek-V4.1-Flash case).
+func TestDeriveAutoAliasesUsesLiveContextTokensForNewModels(t *testing.T) {
+	// decodeModelCatalogItem is how the gateway fetch reads a /v1/models row.
+	model, ok, err := decodeModelCatalogItem([]byte(
+		`{"id":"deepseek-ai/DeepSeek-V4.1-Flash","display_name":"DeepSeek V4.1 Flash","context_tokens":1048576}`))
+	if err != nil || !ok {
+		t.Fatalf("decode model row: ok=%v err=%v", ok, err)
+	}
+	if model.ContextTokens != 1_048_576 {
+		t.Fatalf("decoded context_tokens = %d, want 1048576", model.ContextTokens)
+	}
+
+	// seed the snapshot from that live record (only slug + live ctx) —
+	// DeepSeek-V4.1-Flash is deliberately absent from the vendored table.
+	p := pricing.New()
+	if err := p.ReplaceProviderAvailability(
+		pricing.ProviderSference,
+		[]pricing.AvailabilityModel{{
+			CanonicalModelID: model.Slug,
+			DisplayName:      model.DisplayName,
+			ContextTokens:    model.ContextTokens,
+		}},
+		sferenceModelAPIsAvailabilitySource,
+		time.Now().UTC(),
+		"test",
+	); err != nil {
+		t.Fatalf("seed availability: %v", err)
+	}
+
+	derived := deriveAutoAliases(p.Capture())
+	if derived["claude-sference-deepseek-ai-deepseek-v4-1-flash[1m]"] != "deepseek-ai/DeepSeek-V4.1-Flash" {
+		t.Errorf("new model with live context_tokens missing its [1m] twin: %v", derived)
+	}
+}
