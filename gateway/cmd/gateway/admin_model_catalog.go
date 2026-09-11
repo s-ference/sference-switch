@@ -40,8 +40,13 @@ type modelCatalogResponse struct {
 }
 
 type modelCatalogModel struct {
-	Slug          string `json:"slug"`
-	DisplayName   string `json:"display_name"`
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
+	// ContextTokens is the model's context window from the live /v1/models
+	// row. It drives the [1m] picker twin (and Claude Code's believed
+	// window) without a vendored model list, so a newly-released 1M model
+	// is covered the moment the catalog carries it. 0 means unknown.
+	ContextTokens int64  `json:"context_tokens,omitempty"`
 	StorageTarget string `json:"storage_target"`
 	Alias         string `json:"alias,omitempty"`
 	// AliasOneMillion is the [1m] twin id for a 1M-context model, empty
@@ -141,6 +146,9 @@ func (g *Gateway) publishSferenceModelAPIAvailability(
 		availability = append(availability, pricing.AvailabilityModel{
 			CanonicalModelID: model.Slug,
 			DisplayName:      displayName,
+			// Live context_tokens from /v1/models. When 0 (unknown) the
+			// vendored modelmeta fallback decides the [1m] window instead.
+			ContextTokens: model.ContextTokens,
 		})
 	}
 	if err := g.pricing.ReplaceProviderAvailability(
@@ -457,9 +465,18 @@ func decodeModelCatalogItem(raw json.RawMessage) (modelCatalogModel, bool, error
 		displayName = strings.TrimSpace(displayName)
 	}
 
+	// context_tokens is optional and not a hard failure when missing or
+	// malformed — 0 (unknown) just means the vendored modelmeta fallback
+	// decides the window instead.
+	var contextTokens int64
+	if rawCtx, exists := fields["context_tokens"]; exists {
+		_ = json.Unmarshal(rawCtx, &contextTokens)
+	}
+
 	return modelCatalogModel{
-		Slug:        slug,
-		DisplayName: displayName,
+		Slug:          slug,
+		DisplayName:   displayName,
+		ContextTokens: contextTokens,
 	}, true, nil
 }
 
