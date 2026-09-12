@@ -44,6 +44,7 @@ func (g *Gateway) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/admin/config", g.adminConfig)
 	mux.HandleFunc("/v1/admin/model-catalog", g.adminModelCatalog)
 	mux.HandleFunc("/v1/admin/status", g.adminStatus)
+	mux.HandleFunc("/v1/admin/update/check", g.adminUpdateCheck)
 	mux.HandleFunc(
 		"/v1/admin/reasoning/preflight",
 		g.adminReasoningPreflight,

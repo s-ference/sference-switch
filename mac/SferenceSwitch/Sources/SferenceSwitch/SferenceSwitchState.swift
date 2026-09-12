@@ -107,6 +107,7 @@ final class SferenceSwitchState: ObservableObject {
     private let reasoningPreflightReader: any ReasoningPreflightReading
     private let deviceLoginReader: any DeviceLoginReading
     private let authSessionReader: any AuthSessionReading
+    private let updateCheckReader: any UpdateCheckReading
     private let cliRunner: any CLIRunning
     private let clock: any RuntimeClock
     private let loginItemService: any LoginItemServicing
@@ -155,6 +156,7 @@ final class SferenceSwitchState: ObservableObject {
          reasoningPreflightReader: (any ReasoningPreflightReading)? = nil,
          deviceLoginReader: (any DeviceLoginReading)? = nil,
          authSessionReader: (any AuthSessionReading)? = nil,
+         updateCheckReader: (any UpdateCheckReading)? = nil,
          cliRunner: any CLIRunning = SystemCLIRunner(),
          clock: any RuntimeClock = SystemRuntimeClock(),
          loginItemService: (any LoginItemServicing)? = nil,
@@ -172,6 +174,7 @@ final class SferenceSwitchState: ObservableObject {
         self.reasoningPreflightReader = reasoningPreflightReader ?? apiClient
         self.deviceLoginReader = deviceLoginReader ?? apiClient
         self.authSessionReader = authSessionReader ?? apiClient
+        self.updateCheckReader = updateCheckReader ?? apiClient
         self.cliRunner = cliRunner
         self.clock = clock
         self.loginItemService = loginItemService ?? SystemLoginItemService()
@@ -230,6 +233,7 @@ final class SferenceSwitchState: ObservableObject {
         reasoningPreflightReader = reader
         deviceLoginReader = reader
         authSessionReader = reader
+        updateCheckReader = reader
         cliRunner = SystemCLIRunner()
         clock = SystemRuntimeClock()
         loginItemService = SystemLoginItemService()
@@ -337,6 +341,13 @@ final class SferenceSwitchState: ObservableObject {
         guard variant.channel == .stable else { return }
         Task { await adoptDeviceLoginIfPending() }
         Task { await refreshAuthInfo() }
+        // Ask the gateway to re-poll latest.json so a fresh release shows as
+        // "Update available" the moment the Overview opens, instead of up to
+        // 6 h later when the background cadence fires. Fire-and-forget: a
+        // failed check (network, offline) must never block the page.
+        Task {
+            try? await updateCheckReader.triggerUpdateCheck()
+        }
     }
 
     func menuDidHide() {
@@ -1739,6 +1750,11 @@ func routingPresentationEqual(_ lhs: RoutingSnapshot,
         && lhs.reload == rhs.reload
         && lhs.auth == rhs.auth
         && lhs.clients == rhs.clients
+        // The update block is presentation: it drives the Overview's
+        // "Update available" banner. Without it a poll whose ONLY change is
+        // a newly-published release compares equal and is dropped, so the
+        // banner never appears — the whole point of the on-open check.
+        && lhs.update == rhs.update
 }
 
 func projectedUptimeSeconds(snapshot: RoutingSnapshot?,

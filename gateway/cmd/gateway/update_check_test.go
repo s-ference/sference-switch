@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -161,5 +163,87 @@ func TestAdminStatusServesUpdate(t *testing.T) {
 	}
 	if block["checked_at"] == "" {
 		t.Fatal("update block checked_at empty after a check")
+	}
+}
+
+// TestAdminUpdateCheckTriggersFetch: calling the endpoint performs a real
+// manifest fetch (the menubar-on-open path) and returns the fresh status —
+// a just-published release is seen immediately, not up to 6 h later.
+func TestAdminUpdateCheckTriggersFetch(t *testing.T) {
+	srv := manifestServer(t, "0.2.0")
+	defer srv.Close()
+	stubUpdateSeams(t, srv.URL, "0.1.0")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer upstream.Close()
+	cfg := testConfig(t, upstream.URL, upstream.URL)
+	g, adminL, _ := newGateway(t, cfg, resolvedAnthropicSference(t))
+	defer adminL.Close()
+	stop := start(t, g)
+	defer stop()
+
+	// Before: no check has run, so the update block is the zero value.
+	if block := adminStatusGet(t, g)["update"].(map[string]any); block["available"] != false {
+		t.Fatalf("pre-check update block = %+v, want available=false", block)
+	}
+
+	// The app-triggered check must flip it to available.
+	resp, err := http.Post(adminURL(g, "/v1/admin/update/check"), "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update/check status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Available      bool   `json:"available"`
+		LatestVersion  string `json:"latest_version"`
+		CurrentVersion string `json:"current_version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Available || body.LatestVersion != "0.2.0" || body.CurrentVersion != "0.1.0" {
+		t.Fatalf("update/check = %+v, want available with 0.2.0/0.1.0", body)
+	}
+}
+
+// TestAdminUpdateCheckThrottles: repeated calls reuse the last result within
+// the throttle window instead of hammering the manifest server.
+func TestAdminUpdateCheckThrottles(t *testing.T) {
+	// atomic: the handler runs on the server goroutine while the assertion
+	// reads from the test goroutine.
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"schema_version": 1, "product": "sference-switch", "channel": "stable",
+			"tag": "0.3.0", "version": "0.3.0",
+		})
+	}))
+	defer srv.Close()
+	stubUpdateSeams(t, srv.URL, "0.2.0")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer upstream.Close()
+	cfg := testConfig(t, upstream.URL, upstream.URL)
+	g, adminL, _ := newGateway(t, cfg, resolvedAnthropicSference(t))
+	defer adminL.Close()
+	stop := start(t, g)
+	defer stop()
+
+	for i := 0; i < 5; i++ {
+		resp, err := http.Post(adminURL(g, "/v1/admin/update/check"), "application/json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+	}
+	// Exactly one: >1 means the throttle leaked, 0 means the endpoint
+	// stopped fetching altogether (a regression that always throttles,
+	// including the first call, would pass a `<= 1` assertion).
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("manifest server hit %d times in the throttle window, want exactly 1", got)
 	}
 }

@@ -732,6 +732,13 @@ protocol AuthSessionReading: Sendable {
     func fetchAuthInfo() async throws -> AuthInfoSnapshot
 }
 
+/// POST /v1/admin/update/check — ask the gateway to re-poll latest.json so a
+/// just-published release shows in the Overview instead of waiting up to 6 h
+/// for the background cadence.
+protocol UpdateCheckReading: Sendable {
+    func triggerUpdateCheck() async throws
+}
+
 /// GET /v1/admin/auth/status — who the gateway is signed in as. The main
 /// status poller carries only signed_in/health; the account card fetches
 /// this lazily (the gateway resolves the email against the platform and
@@ -777,7 +784,7 @@ protocol ReasoningPreflightReading: Sendable {
 
 final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
                               ReasoningPreflightReading, DeviceLoginReading,
-                              AuthSessionReading,
+                              AuthSessionReading, UpdateCheckReading,
                               @unchecked Sendable {
     private let runtime: RuntimeProfile
     private let session: URLSession
@@ -795,6 +802,11 @@ final class GatewayAPIClient: AdminStatusReading, ModelCatalogReading,
             configuration.urlCache = nil
             self.session = URLSession(configuration: configuration)
         }
+    }
+
+    func triggerUpdateCheck() async throws {
+        let body: [String: Any] = [:]
+        _ = try await postJSON("v1/admin/update/check", body: body, timeout: 10)
     }
 
     func fetchStatus() async throws -> AdminStatusSnapshot {
