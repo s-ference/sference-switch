@@ -1750,6 +1750,11 @@ func routingPresentationEqual(_ lhs: RoutingSnapshot,
         && lhs.reload == rhs.reload
         && lhs.auth == rhs.auth
         && lhs.clients == rhs.clients
+        // The update block is presentation: it drives the Overview's
+        // "Update available" banner. Without it a poll whose ONLY change is
+        // a newly-published release compares equal and is dropped, so the
+        // banner never appears — the whole point of the on-open check.
+        && lhs.update == rhs.update
 }
 
 func projectedUptimeSeconds(snapshot: RoutingSnapshot?,

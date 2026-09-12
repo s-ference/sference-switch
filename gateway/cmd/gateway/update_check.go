@@ -120,21 +120,39 @@ func (g *Gateway) updateStatusJSON() map[string]any {
 // opens so a just-published release shows immediately instead of waiting for
 // the next 6 h background poll.
 func (g *Gateway) adminUpdateCheck(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+	// POST only, like every other mutating admin route: this triggers an
+	// outbound fetch, and the admin server is unauthenticated on loopback.
+	// A GET needs no CORS preflight, so any page the user visits could
+	// drive gateway→CDN traffic with an <img src=…> to this path.
+	if r.Method != http.MethodPost {
 		g.reject(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	// Throttle: at most one app-triggered check per updateCheckThrottle. A
-	// dev build never checks (checkForUpdate is a no-op) and a fetch failure
-	// keeps the last state, so a bad CDN read here must not alarm.
+	// Throttle: at most one app-triggered fetch per updateCheckThrottle.
+	//
+	// The stamp moves only when a fetch is actually performed. Stamping on
+	// every call would make this a sliding window: overviewDidShow fires on
+	// each .onAppear, so a user bouncing to the Overview faster than the
+	// interval would push the deadline forward forever and never get a
+	// second real check.
+	//
+	// time.Now() keeps its monotonic reading — the elapsed comparison must
+	// not be perturbed by an NTP step or a sleep/wake clock correction.
+	// Only the displayed CheckedAt is wall-clock (set in checkForUpdate).
+	now := time.Now()
 	g.updateMu.Lock()
-	last := g.updateLastTriggerAt
-	g.updateLastTriggerAt = time.Now().UTC()
+	throttled := !g.updateLastTriggerAt.IsZero() &&
+		now.Sub(g.updateLastTriggerAt) < updateCheckThrottle
+	if !throttled {
+		g.updateLastTriggerAt = now
+	}
 	g.updateMu.Unlock()
-	if time.Since(last) < updateCheckThrottle {
+	if throttled {
 		writeJSON(w, http.StatusOK, g.updateStatusJSON())
 		return
 	}
+	// A dev build never checks (checkForUpdate is a no-op) and a fetch
+	// failure keeps the last state, so a bad CDN read here must not alarm.
 	g.checkForUpdate()
 	writeJSON(w, http.StatusOK, g.updateStatusJSON())
 }

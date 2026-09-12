@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -211,9 +212,11 @@ func TestAdminUpdateCheckTriggersFetch(t *testing.T) {
 // TestAdminUpdateCheckThrottles: repeated calls reuse the last result within
 // the throttle window instead of hammering the manifest server.
 func TestAdminUpdateCheckThrottles(t *testing.T) {
-	hits := 0
+	// atomic: the handler runs on the server goroutine while the assertion
+	// reads from the test goroutine.
+	var hits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
+		hits.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"schema_version": 1, "product": "sference-switch", "channel": "stable",
 			"tag": "0.3.0", "version": "0.3.0",
@@ -237,7 +240,10 @@ func TestAdminUpdateCheckThrottles(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 	}
-	if hits > 1 {
-		t.Fatalf("manifest server hit %d times in the throttle window, want <=1", hits)
+	// Exactly one: >1 means the throttle leaked, 0 means the endpoint
+	// stopped fetching altogether (a regression that always throttles,
+	// including the first call, would pass a `<= 1` assertion).
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("manifest server hit %d times in the throttle window, want exactly 1", got)
 	}
 }

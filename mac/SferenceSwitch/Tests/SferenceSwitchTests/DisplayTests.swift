@@ -582,6 +582,44 @@ final class DisplayTests: XCTestCase {
             107)
     }
 
+    /// A poll whose ONLY change is a newly-published release must count as a
+    /// meaningful change. apply() drops snapshots that compare equal, so
+    /// omitting `update` here meant the "Update available" banner never
+    /// appeared: nothing else moves while the user sits on the Overview.
+    func testPresentationEqualityTracksUpdateAvailability() {
+        func snapshot(available: Bool, latest: String) -> RoutingSnapshot {
+            RoutingSnapshot(
+                status: AdminStatusSnapshot(dict: [
+                    "router_boot_id": "boot-a",
+                    "active_generation": 7,
+                    "active_config_hash": "sha256:same",
+                    "desired_config_hash": "sha256:same",
+                    "health": "ready",
+                    "version": "v0.1.6",
+                    "uptime_seconds": NSNumber(value: 100),
+                    "capabilities": ["global_routing"],
+                    "global_routing_enabled": true,
+                    "clients": [],
+                    "update": [
+                        "available": available,
+                        "latest_version": latest,
+                        "current_version": "v0.1.6",
+                        "checked_at": "2026-09-12T00:00:00Z",
+                    ],
+                ]),
+                observedAt: Date(timeIntervalSince1970: 1_000))
+        }
+
+        // Same update block: nothing to re-render.
+        XCTAssertTrue(routingPresentationEqual(
+            snapshot(available: false, latest: ""),
+            snapshot(available: false, latest: "")))
+        // A release appears: the snapshot must be applied.
+        XCTAssertFalse(routingPresentationEqual(
+            snapshot(available: false, latest: ""),
+            snapshot(available: true, latest: "0.1.7")))
+    }
+
     func testGatewayStatusLabel() {
         XCTAssertEqual(gatewayStatusLabel(up: true, uptimeSeconds: 3720),
                        "Gateway: up 1h 2m")
