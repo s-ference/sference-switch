@@ -543,6 +543,9 @@ type Gateway struct {
 	updateMu           sync.Mutex
 	update             updateStatus
 	updateCheckStarted atomic.Bool
+	// updateLastTriggerAt guards the menubar-triggered check throttle so a
+	// chatty app cannot hammer the CDN.
+	updateLastTriggerAt time.Time
 
 	// Active routing snapshot. Admin status reads this exact accepted
 	// configuration instead of independently parsing gateway.yaml.

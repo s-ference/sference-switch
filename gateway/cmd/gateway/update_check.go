@@ -27,6 +27,12 @@ import (
 // quickly an install learns about a release, not about origin load.
 const updateCheckInterval = 6 * time.Hour
 
+// updateCheckThrottle is the minimum time between app-triggered checks. The
+// menubar app asks for a check when its Overview opens; throttling keeps a
+// chatty app from hammering the CDN while still refreshing the instant a
+// user actually looks.
+const updateCheckThrottle = 60 * time.Second
+
 // updateStatus is the cached outcome of the last completed check. The zero
 // value (never checked, or a dev build) reports available=false with empty
 // versions, which the app renders as no update UI.
@@ -107,4 +113,28 @@ func (g *Gateway) updateStatusJSON() map[string]any {
 		"current_version": s.CurrentVersion,
 		"checked_at":      rfc3339OrEmpty(s.CheckedAt),
 	}
+}
+
+// adminUpdateCheck triggers one release-manifest fetch on demand, throttled,
+// and returns the fresh status. The menubar app calls this when its Overview
+// opens so a just-published release shows immediately instead of waiting for
+// the next 6 h background poll.
+func (g *Gateway) adminUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		g.reject(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	// Throttle: at most one app-triggered check per updateCheckThrottle. A
+	// dev build never checks (checkForUpdate is a no-op) and a fetch failure
+	// keeps the last state, so a bad CDN read here must not alarm.
+	g.updateMu.Lock()
+	last := g.updateLastTriggerAt
+	g.updateLastTriggerAt = time.Now().UTC()
+	g.updateMu.Unlock()
+	if time.Since(last) < updateCheckThrottle {
+		writeJSON(w, http.StatusOK, g.updateStatusJSON())
+		return
+	}
+	g.checkForUpdate()
+	writeJSON(w, http.StatusOK, g.updateStatusJSON())
 }
