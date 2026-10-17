@@ -322,8 +322,14 @@ Plain doctor is read-only. --fix cannot be combined with --json.
   sference-switch claude reasoning sference <model> off|follow-harness|effort <value>|default
 
 on points ANTHROPIC_BASE_URL in ~/.claude/settings.json at the gateway door
-and backs up the prior value. off restores it exactly when possible, or strips
-only gateway-owned values after drift. start and stop alias on and off.
+and backs up the prior value. It also wires gateway model discovery so the
+/model picker lists the Sference aliases: sets
+CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 and primes the picker's
+gateway-models.json cache from the door. No credential is installed — the
+picker reads the cache without one, and an apiKeyHelper/token would shadow
+the claude.ai login and disable org connectors. off restores everything
+exactly when possible, or strips only gateway-owned values after drift, and
+removes the primed cache. start and stop alias on and off.
 
 subagents selects a configured alias, raw Sference slug, or native model for
 Task and sidechain requests. "on" re-enables the kept model. "inherit" leaves

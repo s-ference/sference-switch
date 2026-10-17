@@ -363,7 +363,7 @@ func TestClaudeOnCreatesFileAndOffDeletesIt(t *testing.T) {
 	if bak.Existed {
 		t.Errorf("backup existed=true for a created file")
 	}
-	if len(bak.Missing) != 1 || bak.Missing[0] != claudeManagedEnvKey {
+	if len(bak.Missing) != 2 || bak.Missing[0] != claudeManagedEnvKey || bak.Missing[1] != claudeDiscoveryEnvKey {
 		t.Errorf("backup missing list = %v", bak.Missing)
 	}
 	if code := a.off(); code != 0 {
@@ -460,7 +460,7 @@ func TestClaudeOnPreservesOtherSettingsContent(t *testing.T) {
 
 func TestClaudeOnOnlyWritesWhenChanged(t *testing.T) {
 	a, out := testAdapter(t)
-	writeSettingsFile(t, a, `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8081"}}`)
+	writeSettingsFile(t, a, `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8081","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"1"}}`)
 	before := fileBytes(t, a.settingsPath)
 	if code := a.on(); code != 0 {
 		t.Fatal("on failed")

@@ -41,9 +41,11 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -59,6 +61,17 @@ const (
 	claudeAliasPrefix    = "claude-sference-" // the model-discovery contract alias namespace
 	claudeHarnessName    = "claude"
 
+	// The model-discovery contract: Claude Code only queries the
+	// gateway's /v1/models (populating /model) when the base URL is
+	// non-Anthropic AND this flag is set. A live fetch additionally
+	// needs a token-style credential (OAuth sign-in alone skips it) —
+	// but the picker is primed from its gateway-models.json cache
+	// regardless of credentials, so on() primes that cache from the
+	// door instead of installing a credential (an apiKeyHelper would
+	// shadow the claude.ai login and disable org connectors).
+	claudeDiscoveryEnvKey   = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
+	claudeDiscoveryEnvValue = "1"
+
 	// Status uses 0 = on and 3 = off (1 is reserved for operational
 	// errors, 2 for usage).
 	statusExitOff = 3
@@ -66,7 +79,7 @@ const (
 
 // claudeManagedEnvKeys is the complete managed key set. off restores or
 // strips exactly these keys; nothing else in the env block is ours.
-var claudeManagedEnvKeys = []string{claudeManagedEnvKey, claudeSubagentEnvKey}
+var claudeManagedEnvKeys = []string{claudeManagedEnvKey, claudeSubagentEnvKey, claudeDiscoveryEnvKey}
 
 func cmdClaude(args []string) int {
 	if len(args) == 0 {
@@ -349,6 +362,10 @@ func (a *claudeAdapter) ownedEnvValue(key, val string) bool {
 	if key == claudeSubagentEnvKey {
 		return claudeSubagentOwned(val)
 	}
+	if key == claudeDiscoveryEnvKey {
+		// "1" is the only value we ever write.
+		return val == claudeDiscoveryEnvValue
+	}
 	return a.isGatewayURL(val)
 }
 
@@ -533,6 +550,12 @@ func recordBackupKey(bak *claudeBackup, key, cur string, curSet bool) {
 // re-manage the harness on `off`, so it is discarded instead.
 func (a *claudeAdapter) poisonedBackup(bak *claudeBackup) bool {
 	for k, v := range bak.Values {
+		if k == claudeDiscoveryEnvKey {
+			// Restoring "1" without the gateway base URL is inert
+			// (discovery requires both), unlike a gateway URL or an
+			// alias, which actively misroute. Not poison.
+			continue
+		}
 		if a.ownedEnvValue(k, v) {
 			return true
 		}
@@ -543,6 +566,103 @@ func (a *claudeAdapter) poisonedBackup(bak *claudeBackup) bool {
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// --- picker cache priming ----------------------------------------------------
+
+// Claude Code caches gateway discovery results in gateway-models.json and
+// primes the /model picker from that cache at startup REGARDLESS of
+// credentials (verified on v2.1.302: the no-credential skip path returns
+// without touching the cache; the prime read is gated only on the discovery
+// flag + a non-first-party base URL). on() therefore primes the cache with
+// exactly what the door serves instead of installing a credential: an
+// apiKeyHelper/token would shadow the claude.ai login and disable the org's
+// claude.ai connectors.
+
+// gatewayModelsCachePath locates the picker cache, honoring CLAUDE_CONFIG_DIR.
+func gatewayModelsCachePath() string {
+	if dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); dir != "" {
+		return filepath.Join(dir, "cache", "gateway-models.json")
+	}
+	return homeJoin(".claude", "cache", "gateway-models.json")
+}
+
+type gatewayModelsCache struct {
+	BaseURL   string           `json:"baseUrl"`
+	FetchedAt int64            `json:"fetchedAt"`
+	Models    []map[string]any `json:"models"`
+}
+
+// discoveryIDFilter mirrors the client-side keep rule (ids containing
+// "claude" or "anthropic", case-insensitive) so the primed cache matches
+// what a live fetch would have cached.
+var discoveryIDFilter = regexp.MustCompile(`(?i)claude|anthropic`)
+
+// primeGatewayModelsCache fetches the door's /v1/models and writes the
+// picker cache for our base URL. The door is the single source of truth:
+// the primed list is identical to what discovery would cache.
+func (a *claudeAdapter) primeGatewayModelsCache() error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(a.desiredURL() + "/v1/models?limit=1000")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("door /v1/models returned %d", resp.StatusCode)
+	}
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&body); err != nil {
+		return fmt.Errorf("door /v1/models parse: %w", err)
+	}
+	models := make([]map[string]any, 0, len(body.Data))
+	for _, m := range body.Data {
+		id, _ := m["id"].(string)
+		if id == "" || !discoveryIDFilter.MatchString(id) {
+			continue
+		}
+		entry := map[string]any{"id": id}
+		if v, ok := m["display_name"].(string); ok && v != "" {
+			entry["display_name"] = v
+		}
+		if v, ok := m["description"].(string); ok && v != "" {
+			entry["description"] = v
+		}
+		models = append(models, entry)
+	}
+	cache := gatewayModelsCache{BaseURL: a.desiredURL(), FetchedAt: time.Now().UnixMilli(), Models: models}
+	raw, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	path := gatewayModelsCachePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o600)
+}
+
+// unprimeGatewayModelsCache removes the picker cache when it belongs to this
+// gateway (base URL points at us); a foreign cache is left alone.
+func (a *claudeAdapter) unprimeGatewayModelsCache() {
+	path := gatewayModelsCachePath()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return // absent or unreadable: nothing to do
+	}
+	var cache gatewayModelsCache
+	if err := json.Unmarshal(raw, &cache); err != nil {
+		return
+	}
+	if !a.isGatewayURL(cache.BaseURL) {
+		return
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(a.out, "warning: could not remove the primed picker cache %s: %v\n", path, err)
+	}
 }
 
 // --- on ---------------------------------------------------------------------
@@ -569,7 +689,16 @@ func (a *claudeAdapter) on() int {
 	}
 
 	desired := a.desiredURL()
+
+	// The model-discovery contract needs the opt-in flag on top of the
+	// base URL; the picker's data comes from priming the discovery
+	// cache (see primeGatewayModelsCache), not from a credential.
+	discCur, discCurSet := envString(env, claudeDiscoveryEnvKey)
+
 	changed := !curSet || cur != desired
+	if !discCurSet || discCur != claudeDiscoveryEnvValue {
+		changed = true
+	}
 
 	// Persist the backup BEFORE modifying the settings file, so no
 	// failure or crash window exists in which the file is modified but
@@ -590,6 +719,7 @@ func (a *claudeAdapter) on() int {
 			WrittenHash: sha256Hex(raw),
 		}
 		recordBackupKey(nb, claudeManagedEnvKey, cur, curSet)
+		recordBackupKey(nb, claudeDiscoveryEnvKey, discCur, discCurSet)
 		if m, ok := root["model"].(string); ok {
 			nb.Model = m
 		} else {
@@ -599,12 +729,26 @@ func (a *claudeAdapter) on() int {
 			fmt.Fprintf(a.out, "claude on: write backup: %v (settings untouched)\n", err)
 			return 1
 		}
-	} else if bak != nil && !managed && !backupCovers(bak, claudeManagedEnvKey) {
-		recordBackupKey(bak, claudeManagedEnvKey, cur, curSet)
-		bak.WrittenHash = sha256Hex(raw)
-		if err := saveClaudeBackup(a.backupPath, bak); err != nil {
-			fmt.Fprintf(a.out, "claude on: write backup: %v (settings untouched)\n", err)
-			return 1
+	} else if bak != nil {
+		// Additive extension for keys an older backup doesn't cover
+		// (e.g. discovery wiring added after the first `on`). The
+		// base-URL key stays gated on !managed: recording a
+		// gateway-owned value there would poison the restore.
+		extended := false
+		if !managed && !backupCovers(bak, claudeManagedEnvKey) {
+			recordBackupKey(bak, claudeManagedEnvKey, cur, curSet)
+			extended = true
+		}
+		if !backupCovers(bak, claudeDiscoveryEnvKey) {
+			recordBackupKey(bak, claudeDiscoveryEnvKey, discCur, discCurSet)
+			extended = true
+		}
+		if extended {
+			bak.WrittenHash = sha256Hex(raw)
+			if err := saveClaudeBackup(a.backupPath, bak); err != nil {
+				fmt.Fprintf(a.out, "claude on: write backup: %v (settings untouched)\n", err)
+				return 1
+			}
 		}
 	}
 
@@ -615,6 +759,7 @@ func (a *claudeAdapter) on() int {
 			root["env"] = env
 		}
 		env[claudeManagedEnvKey] = desired
+		env[claudeDiscoveryEnvKey] = claudeDiscoveryEnvValue
 		newRaw, err = writeClaudeSettings(a.settingsPath, root)
 		if err != nil {
 			if nb != nil {
@@ -640,8 +785,17 @@ func (a *claudeAdapter) on() int {
 		}
 	}
 
+	// Prime the picker's discovery cache from the door even when the
+	// settings were already correct: the cache may be missing or stale.
+	// Warn-only — a down door must not fail the wiring itself.
+	if err := a.primeGatewayModelsCache(); err != nil {
+		fmt.Fprintf(a.out, "claude on: could not prime the /model picker cache from the door (%v); the picker shows built-ins until a successful 'claude on' with the door up\n", err)
+	} else {
+		fmt.Fprintf(a.out, "claude: /model picker cache primed from %s\n", desired)
+	}
+
 	if changed {
-		fmt.Fprintf(a.out, "claude: on (%s -> %s in %s)\n", claudeManagedEnvKey, desired, a.settingsPath)
+		fmt.Fprintf(a.out, "claude: on (%s -> %s, %s=1 in %s)\n", claudeManagedEnvKey, desired, claudeDiscoveryEnvKey, a.settingsPath)
 		fmt.Fprintln(a.out, "restart Claude Code sessions to pick this up; revert with 'sference-switch claude off'.")
 	} else {
 		fmt.Fprintf(a.out, "claude: already on (%s = %s)\n", claudeManagedEnvKey, desired)
@@ -762,6 +916,7 @@ func (a *claudeAdapter) off() int {
 	}
 	a.fixModelAlias(root, bak)
 
+	a.unprimeGatewayModelsCache()
 	if !bak.Existed && len(root) == 0 {
 		if err := os.Remove(a.settingsPath); err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(a.out, "claude off: remove %s: %v\n", a.settingsPath, err)
@@ -820,6 +975,7 @@ func (a *claudeAdapter) offStripOnly(root map[string]any, existed bool, bak *cla
 			return 1
 		}
 	}
+	a.unprimeGatewayModelsCache()
 	if bak != nil {
 		if err := os.Remove(a.backupPath); err != nil {
 			fmt.Fprintf(a.out, "claude off: remove backup: %v\n", err)
@@ -1666,6 +1822,7 @@ func (a *claudeAdapter) status(stdout io.Writer) int {
 	}
 	var cur string
 	var curSet bool
+	var disc string
 	if existed {
 		env, envErr := settingsEnv(root)
 		if envErr != nil {
@@ -1673,6 +1830,14 @@ func (a *claudeAdapter) status(stdout io.Writer) int {
 			return 1
 		}
 		cur, curSet = envString(env, claudeManagedEnvKey)
+		disc, _ = envString(env, claudeDiscoveryEnvKey)
+	}
+	cacheLabel := "-"
+	if raw, err := os.ReadFile(gatewayModelsCachePath()); err == nil {
+		var cache gatewayModelsCache
+		if json.Unmarshal(raw, &cache) == nil {
+			cacheLabel = fmt.Sprintf("%d models primed for %s", len(cache.Models), cache.BaseURL)
+		}
 	}
 	managed := curSet && a.isGatewayURL(cur)
 	backupPresent := false
@@ -1696,6 +1861,8 @@ func (a *claudeAdapter) status(stdout io.Writer) int {
 	fmt.Fprintf(stdout, "claude: %s\n", state)
 	fmt.Fprintf(stdout, "  settings:            %s%s\n", a.settingsPath, map[bool]string{true: "", false: " (absent)"}[existed])
 	fmt.Fprintf(stdout, "  %s:  %s\n", claudeManagedEnvKey, orDash(cur))
+	fmt.Fprintf(stdout, "  %s: %s\n", claudeDiscoveryEnvKey, orDash(disc))
+	fmt.Fprintf(stdout, "  picker cache:        %s\n", cacheLabel)
 	fmt.Fprintf(stdout, "  subagents:           %s\n", subLabel)
 	fmt.Fprintf(stdout, "  door port:           %s (target %s)\n", a.desiredPort, a.desiredURL())
 	fmt.Fprintf(stdout, "  backup:              %s\n", map[bool]string{true: "present (" + a.backupPath + ")", false: "none"}[backupPresent])
