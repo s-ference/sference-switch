@@ -83,7 +83,7 @@ var claudeManagedEnvKeys = []string{claudeManagedEnvKey, claudeSubagentEnvKey, c
 
 func cmdClaude(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: sference-switch claude on|off|status|subagents [<model>|on|inherit]|route [<family> <target|default>]|reasoning sference <model> off|follow-harness|effort <value>|default  (start/stop are aliases for on/off)")
+		fmt.Fprintln(os.Stderr, "usage: sference-switch claude on|off|status|prime|subagents [<model>|on|inherit]|route [<family> <target|default>]|reasoning sference <model> off|follow-harness|effort <value>|default  (start/stop are aliases for on/off)")
 		return 2
 	}
 	a, err := newClaudeAdapterFromEnv()
@@ -114,6 +114,8 @@ func cmdClaude(args []string) int {
 		return a.on()
 	case "off", "stop":
 		return a.off()
+	case "prime":
+		return a.prime()
 	case "status":
 		return a.status(os.Stdout)
 	case "subagents":
@@ -688,6 +690,50 @@ func (a *claudeAdapter) unprimeGatewayModelsCache(bak *claudeBackup) {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		fmt.Fprintf(a.out, "warning: could not remove the primed picker cache %s: %v\n", path, err)
 	}
+}
+
+// managedWiring reports whether settings.json currently points at this
+// gateway (the base URL is one of our ports).
+func (a *claudeAdapter) managedWiring() bool {
+	root, _, existed, err := loadClaudeSettings(a.settingsPath)
+	if err != nil || !existed {
+		return false
+	}
+	env, err := settingsEnv(root)
+	if err != nil {
+		return false
+	}
+	cur, curSet := envString(env, claudeManagedEnvKey)
+	return curSet && a.isGatewayURL(cur)
+}
+
+// prime re-primes the picker's discovery cache from the door without
+// touching settings (`claude prime`). The cache is shared with every tool
+// that primes a different base URL (e.g. `sference launch claude` primes
+// api.sference.com), so a switch-managed picker silently loses its models
+// whenever that happens; prime restores it.
+func (a *claudeAdapter) prime() int {
+	if err := a.primeGatewayModelsCache(); err != nil {
+		fmt.Fprintf(a.out, "claude prime: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(a.out, "claude: /model picker cache primed from %s\n", a.desiredURL())
+	return 0
+}
+
+// reprimeClaudePickerIfManaged re-primes the picker cache when Claude Code
+// is gateway-managed. Called at the end of `up` (which `restart` rides):
+// the door is up by then, so priming always has a live /v1/models. Warn-only.
+func reprimeClaudePickerIfManaged(out io.Writer) {
+	a, err := newClaudeAdapterFromEnv()
+	if err != nil || !a.managedWiring() {
+		return
+	}
+	if err := a.primeGatewayModelsCache(); err != nil {
+		fmt.Fprintf(out, "claude: could not re-prime the /model picker cache: %v\n", err)
+		return
+	}
+	fmt.Fprintln(out, "claude: /model picker cache re-primed (gateway-managed)")
 }
 
 // --- on ---------------------------------------------------------------------

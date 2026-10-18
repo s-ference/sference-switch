@@ -235,6 +235,10 @@ func cmdUp(args []string) int {
 	}
 	failures += upMenubar()
 
+	// The picker cache is shared with any tool that primes a different
+	// base URL; restore ours while the door is guaranteed up.
+	reprimeClaudePickerIfManaged(os.Stdout)
+
 	fmt.Fprintln(os.Stderr, "")
 	rc := printStatus(lc, os.Stdout, false)
 	if failures > 0 && rc == 0 {
