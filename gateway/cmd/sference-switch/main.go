@@ -110,6 +110,8 @@ func dispatch(args []string) int {
 		return cmdMenubar(args[1:])
 	case "hosts-clean":
 		return cmdHostsClean(args[1:])
+	case "prime":
+		return cmdClaude(append([]string{"prime"}, args[1:]...))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
 		usage()

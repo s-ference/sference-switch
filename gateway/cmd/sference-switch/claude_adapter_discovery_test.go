@@ -238,3 +238,37 @@ func TestClaudeOffRemovesCacheForOldPort(t *testing.T) {
 		t.Errorf("cache for the old port survived off")
 	}
 }
+
+func TestClaudePrimeVerb(t *testing.T) {
+	a := primeAdapter(t, primeModelsPayload)
+	if code := a.prime(); code != 0 {
+		t.Fatal("prime failed")
+	}
+	cache := readCache(t)
+	if cache.BaseURL != a.desiredURL() || len(cache.Models) != 2 {
+		t.Errorf("cache = %+v", cache)
+	}
+}
+
+func TestClaudePrimeVerbDownDoorFails(t *testing.T) {
+	a, _ := testAdapter(t) // door port 8081: nothing listens
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	if code := a.prime(); code != 1 {
+		t.Errorf("prime with a down door = %d, want 1", code)
+	}
+}
+
+func TestManagedWiring(t *testing.T) {
+	a, _ := testAdapter(t)
+	if a.managedWiring() {
+		t.Error("managed with no settings file")
+	}
+	writeSettingsFile(t, a, `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8081"}}`)
+	if !a.managedWiring() {
+		t.Error("not managed with a gateway base URL")
+	}
+	writeSettingsFile(t, a, `{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}`)
+	if a.managedWiring() {
+		t.Error("managed with a native base URL")
+	}
+}
