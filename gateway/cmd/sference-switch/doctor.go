@@ -39,6 +39,7 @@ import (
 	"github.com/sference/sference-switch/gateway/internal/auth"
 	"github.com/sference/sference-switch/gateway/internal/config"
 	"github.com/sference/sference-switch/gateway/internal/door"
+	"github.com/sference/sference-switch/gateway/internal/hostsblock"
 	"github.com/sference/sference-switch/gateway/internal/launchd"
 	"github.com/sference/sference-switch/gateway/internal/pidfile"
 	"github.com/sference/sference-switch/gateway/internal/route"
@@ -218,6 +219,7 @@ func runDoctor(o doctorOpts) doctorReport {
 
 	// --- 7. supervision ---------------------------------------------------
 	doctorSupervisionChecks(add, routerState, doorSpecs, doorUp)
+	doctorHostsBlockCheck(add)
 
 	// --- 8. e2e -----------------------------------------------------------
 	doctorE2EChecks(add, o, doorSpecs, doorUp, f, telPath)
@@ -1367,6 +1369,20 @@ func doctorPortTarget(raw, desiredPort string) (status, finding string) {
 
 // doctorSupervisionChecks reports the launchd state per label. Skipped
 // entirely under SFERENCE_SWITCH_LAUNCHD=off or off darwin, matching the rest of
+// doctorHostsBlockCheck fails when the stale /etc/hosts interception block
+// (from the removed transparent-interception path) is still present: it
+// redirects api.anthropic.com to the removed :443 door, breaking direct
+// Claude Code traffic AND the router's native passthrough. Manual fix —
+// /etc/hosts is root-owned, so no fixArgv.
+func doctorHostsBlockCheck(add addCheck) {
+	if !hostsblock.Present(hostsblock.HostsPath) {
+		return
+	}
+	add("system", "hosts_block", docFail,
+		"stale sference-switch block in "+hostsblock.HostsPath+" (redirects api.anthropic.com to the removed :443 door; every native request fails)",
+		"sudo sference-switch hosts-clean")
+}
+
 // the CLI's launchd seam.
 func doctorSupervisionChecks(add addCheck, routerState portState, doorSpecs []door.Config, doorUp map[string]bool) {
 	if runtime.GOOS != "darwin" || launchdDisabled() {

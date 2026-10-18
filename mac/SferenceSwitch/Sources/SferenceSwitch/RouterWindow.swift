@@ -893,31 +893,26 @@ private struct RoutingOverviewView: View {
         }
     }
 
-    /// The master on/off switch — same control as the menu bar toggle. This
-    /// flips the TLS intercept (proxy), which is what needs sudo; it is NOT
-    /// gated on `canMutateRouting`, so it stays usable even when the app
-    /// identity is in a mismatched (ad-hoc re-signed) state.
+    /// The master on/off switch — same control as the menu bar toggle. It
+    /// flips global routing: Off is native passthrough, On applies the saved
+    /// model mappings.
     private var switchCard: some View {
         RoutingSectionCard {
             HStack {
                 Label("Switch", systemImage: "power")
                     .font(.headline)
                 Spacer()
-                if state.proxyPending {
+                if state.pendingGlobalRouting != nil {
                     ProgressView()
                         .controlSize(.small)
                         .accessibilityLabel("Applying switch change")
-                } else if state.proxyChecking {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel("Checking switch status")
                 }
             }
         } content: {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 14) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(state.proxyEnabled
+                        Text(state.displayedGlobalRoutingEnabled
                             ? "Switch is on"
                             : "Switch is off")
                             .font(.body.weight(.medium))
@@ -928,27 +923,19 @@ private struct RoutingOverviewView: View {
                     }
                     Spacer(minLength: 12)
                     Toggle("", isOn: Binding(
-                        get: { state.proxyEnabled },
+                        get: { state.displayedGlobalRoutingEnabled },
                         set: { enabled in
                             guard !isPreview else { return }
-                            _ = state.requestProxyEnabled(enabled)
+                            _ = state.requestGlobalRouting(enabled)
                         }
                     ))
                     .labelsHidden()
                     .toggleStyle(.switch)
-                    .disabled(isPreview || state.proxyPending)
+                    .disabled(isPreview || state.pendingGlobalRouting != nil)
                     .accessibilityIdentifier("overview-switch-toggle")
                     .accessibilityLabel("Switch")
-                    .accessibilityValue(state.proxyEnabled ? "On" : "Off")
+                    .accessibilityValue(state.displayedGlobalRoutingEnabled ? "On" : "Off")
                 }
-
-                Label(
-                    "Toggling the switch asks for your macOS password. Turning it on installs a system service and edits /etc/hosts so Sference can intercept supported coding traffic; turning it off removes them again.",
-                    systemImage: "lock.shield")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("overview-switch-sudo-warning")
             }
             .padding(6)
         }
@@ -956,12 +943,12 @@ private struct RoutingOverviewView: View {
     }
 
     private var switchDescription: String {
-        if state.proxyPending {
-            return "Applying the change. Wait for the system to confirm."
+        if state.pendingGlobalRouting != nil {
+            return "Applying the change. Wait for the gateway to confirm."
         }
-        return state.proxyEnabled
-            ? "Supported coding traffic is intercepted and routed by your saved mappings. Turn off to go back to native providers."
-            : "Supported coding traffic goes to native providers. Turn on to intercept and route it with your saved mappings."
+        return state.displayedGlobalRoutingEnabled
+            ? "Coding traffic is routed by your saved mappings. Turn off to go back to native providers."
+            : "Coding traffic goes to native providers. Turn on to route it with your saved mappings."
     }
 
     private var liveRequestPath: some View {
@@ -1333,10 +1320,6 @@ private struct ClientRoutingView: View {
                 if !isPreview {
                     modelCatalogStatus
                 }
-                if client.name == "claude-code" {
-                    pickerInjectToggle
-                    Divider()
-                }
                 if client.name == "codex" {
                     codexRouteRow
                 } else {
@@ -1353,29 +1336,6 @@ private struct ClientRoutingView: View {
                 }
             }
         }
-    }
-
-    private var pickerInjectToggle: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Include Sference in /model")
-                    .font(.callout)
-                Text("Show Sference models in Claude Code's model picker")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Toggle("", isOn: Binding(
-                get: { state.routingSnapshot?.pickerInjectEnabled ?? true },
-                set: { newValue in
-                    state.requestPickerInject(newValue)
-                }
-            ))
-            .labelsHidden()
-            .disabled(state.pickerInjectMutationPending)
-        }
-        .padding(.vertical, 4)
-        .accessibilityIdentifier("picker-inject-toggle")
     }
 
     @ViewBuilder

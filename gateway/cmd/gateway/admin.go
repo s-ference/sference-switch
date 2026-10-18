@@ -550,16 +550,11 @@ func (g *Gateway) adminStatus(w http.ResponseWriter, r *http.Request) {
 		reloadState = "pending"
 	}
 	globalEnabled := false
-	// Defaults to true when no config is loaded, matching
-	// config.IsPickerInjectEnabled's absent-field behaviour. state.file is nil
-	// before the first successful config load, so this must not dereference it.
-	pickerInjectEnabled := true
 	capabilities := []string{"global_routing"}
 	if state.file != nil {
 		if state.file.Global.RoutingEnabled != nil {
 			globalEnabled = *state.file.Global.RoutingEnabled
 		}
-		pickerInjectEnabled = config.IsPickerInjectEnabled(state.file.Global)
 	}
 	signedIn, fallbackInUse := g.authState()
 	ah := g.authHealth()
@@ -576,7 +571,6 @@ func (g *Gateway) adminStatus(w http.ResponseWriter, r *http.Request) {
 			"error": reloadErr,
 		},
 		"global_routing_enabled": globalEnabled,
-		"picker_inject_enabled":  pickerInjectEnabled,
 		"uptime_seconds":         g.uptimeSeconds(),
 		"version":                version.Version,
 		"update":                 g.updateStatusJSON(),

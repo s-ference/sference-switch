@@ -5,8 +5,8 @@
 // replaced via the existing menubar.go machinery (materialize + activate).
 //
 // No sudo is needed: the CLI installs to ~/.local/bin and the app to
-// ~/Applications, both user-owned. The daemons (router, door, tlsdoor) are
-// not restarted — `sference-switch restart` adopts the new binary.
+// ~/Applications, both user-owned. The daemons (router, door) are not
+// restarted — `sference-switch restart` adopts the new binary.
 package main
 
 import (

@@ -19,8 +19,6 @@ func cmdConfig(args []string) int {
 		return cmdConfigPreviewSnapshot(args[1:])
 	case "preview-validate":
 		return cmdConfigPreviewValidate(args[1:])
-	case "set":
-		return cmdConfigSet(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", args[0])
 		return 2

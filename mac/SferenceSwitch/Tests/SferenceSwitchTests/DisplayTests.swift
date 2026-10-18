@@ -337,14 +337,17 @@ final class DisplayTests: XCTestCase {
             fixturePresentation.accessibilityStatus,
             "On")
 
+        // Outside a fixture the journaled path is unavailable, but the
+        // toggle stays enabled: requestGlobalRouting falls back to the
+        // CLI's direct config write (the "(limited)" marker).
         let livePresentation = globalRoutingTogglePresentation(
             state: state,
             isPreviewFixture: false)
         XCTAssertTrue(livePresentation.isOn)
-        XCTAssertFalse(livePresentation.isEnabled)
+        XCTAssertTrue(livePresentation.isEnabled)
         XCTAssertEqual(
             livePresentation.accessibilityStatus,
-            "Unavailable")
+            "On (limited)")
     }
 
     @MainActor
