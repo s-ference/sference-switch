@@ -25,9 +25,8 @@ Then open the app and do three things — no terminal commands needed:
 
 1. **Sign in** with your Sference account. The app shows the device-flow
    verification code and opens the approval page (Account card → Sign In).
-2. **Turn routing on** with the **Switch** toggle. The bundle's first toggle
-   asks for your macOS password once (it installs the root TLS service and
-   edits `/etc/hosts`), then routes any running Claude Code on the machine.
+2. **Turn routing on** with the **Switch** toggle. It flips the global routing
+   switch: off is native passthrough, on applies your saved model mappings.
 3. **Pick a model.** In Claude Code, `/model` lists `[Sference]` entries.
    Choose the `… (1M context)` variant of a 1M model to use its full window.
 
@@ -59,58 +58,37 @@ Security**, scroll to **Security**, and click **Open Anyway**. This control
 appears after a blocked launch attempt. A managed Mac may prohibit the
 override.
 
-## Transparent interception
+## How Claude Code is connected
 
-Sference Switch is installed as a root service so that *any* Claude Code
-session on the machine is routed without user intervention and without
-changing Claude Code's configuration.
-
-At startup the TLS door (a launch daemon owned by `root`) binds loopback
-port 443. `intercept on` writes a guarded block to `/etc/hosts`:
-
-```text
-# sference-switch begin
-127.0.0.1 api.anthropic.com
-::1 api.anthropic.com
-# sference-switch end
-```
-
-The door presents a leaf certificate for `api.anthropic.com` minted from a
-Sference Switch local CA, which `tls install` trusts in the macOS System
-keychain. Only the DNS name resolution is redirected: the request still says
-it is going to `https://api.anthropic.com`, so Claude Code cannot distinguish
-the switch from Anthropic's real edge.
-
-Inside the door, requests are partitioned by path:
-
-- **Inference** (`/v1/messages`, `/v1/messages/count_tokens`) and model
-  discovery (`/v1/models`) go to the local Sference router.
-- **Bootstrap** (`/api/claude_cli/bootstrap`) is fetched from the real
-  Anthropic and post-processed to inject `[Sference]` models into the picker.
-- **Everything else** — OAuth, feature flags, telemetry, MCP registry —
-  passes through to the real `api.anthropic.com` unmodified.
-
-Because of this allowlist, Claude Code keeps full first-party behaviour:
-your Anthropic sign-in and OAuth work, feature flags load, and telemetry is
-reported normally. The switch never sees the control-plane traffic except to
-proxy it.
-
-### DNS bypass
-
-The door and router resolve their own outbound DNS via a raw A-record query
-to `1.1.1.1`, so their calls to `api.anthropic.com` do not loop back into the
-door through the `/etc/hosts` entry. This is what keeps passthrough traffic
-from recursing into the proxy.
-
-### Turning it off
+The switch points Claude Code at the local gateway through
+`ANTHROPIC_BASE_URL` in `~/.claude/settings.json`:
 
 ```sh
-sudo sference-switch intercept off   # remove the /etc/hosts block
-sudo sference-switch tls service uninstall   # stop and unload the :443 daemon
+sference-switch claude on    # wire it up
+sference-switch claude off   # restore the previous settings
 ```
 
-`intercept off` restores `api.anthropic.com` to its real DNS result, so
-Claude Code returns to talking directly to Anthropic.
+`claude on` writes the base URL plus
+`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, and primes the picker's
+discovery cache (`~/.claude/cache/gateway-models.json`) from the gateway's own
+`/v1/models`. That is what makes the `[Sference]` entries appear in `/model`.
+
+No credential is installed: gateway model discovery skips its live fetch when
+no token-style credential resolves (an OAuth sign-in alone does not count), but
+Claude Code primes the picker from the cache regardless — while an
+`apiKeyHelper` or API key would shadow the claude.ai login and disable your
+organization's claude.ai connectors.
+
+`claude off` restores the settings exactly when possible, or strips only
+gateway-owned values after drift, and removes the primed cache.
+
+### Model windows
+
+Claude Code assumes any model id it does not recognize holds 200k tokens. A
+1M-context Sference model is therefore published only under its `[1m]` id
+(`claude-sference-moonshotai-kimi-k3[1m]`), which Claude Code reads as a 1M
+model; the bare id keeps routing for existing sessions but is hidden from the
+picker. Pick the `[1m]` entry in `/model` to use the full window.
 
 ## Use the Mac app
 
@@ -133,23 +111,11 @@ without maintaining separate state.
 
 ## Claude Code
 
-Because interception happens at the network layer (see
-[Transparent interception](#transparent-interception)), Claude Code needs no
-configuration and no restart when you toggle routing. Sference models appear
-in Claude Code's `/model` picker with a `[Sference]` prefix; run `/model` and
-choose one, or keep a native Claude model for requests that pass through.
-
-The picker is populated by injecting Sference models into Claude Code's
-bootstrap response. It is on by default and can be toggled from the menu bar
-app ("Include Sference in /model", Model Routing → Claude Code) or from the
-CLI:
-
-```sh
-sference-switch config set picker_inject true|false
-```
-
-Turning it off removes `[Sference]` models from `/model`; model routing for
-the families is unaffected.
+Run `sference-switch claude on` once (see
+[How Claude Code is connected](#how-claude-code-is-connected)); Sference models
+then appear in Claude Code's `/model` picker with a `[Sference]` prefix. Run
+`/model` and choose one, or keep a native Claude model for requests that pass
+through.
 
 Useful routing controls:
 
@@ -171,9 +137,8 @@ configured alias, or a Sference model slug. Run
 To stop all routing through Sference and return to direct Anthropic:
 
 ```sh
-sference-switch off                       # stop routing; native passthrough
-sudo sference-switch intercept off        # remove the /etc/hosts block
-sudo sference-switch tls service uninstall  # stop the :443 door daemon
+sference-switch off          # stop routing; native passthrough
+sference-switch claude off   # restore Claude Code's settings
 ```
 
 ## Codex CLI
@@ -223,15 +188,10 @@ Sference Switch stores configuration, local state, logs, and telemetry under
 ```text
 ~/.sference/switch/logs/router.log
 ~/.sference/switch/logs/door.log
-~/.sference/switch/logs/tlsdoor-bootstrap.log
 ```
 
-`router.log` is the Sference router; `door.log` is the plain loopback door
-that Claude Code's `ANTHROPIC_BASE_URL` used before transparent interception.
-`tlsdoor-bootstrap.log` traces the TLS door's model-picker injection — it is
-user-readable so the interception path is debuggable without `sudo`, even
-though the :443 door itself runs as `root`. The root door's own stderr is
-`/var/log/sference-switch/tlsdoor.log`.
+`router.log` is the Sference router; `door.log` is the loopback door that
+Claude Code's `ANTHROPIC_BASE_URL` points at.
 
 Run `sference-switch auth login` if the Sference credential expires or the
 grant is revoked. The command runs the browser device flow, reloads the
@@ -248,13 +208,6 @@ sference-switch doctor
 the SHA-256 checksum, and replaces the CLI and menubar app in place. No sudo is
 needed. Pass `--check` to report whether an update is available without
 installing one, or `--cli-only` to leave the app alone.
-
-The `:443` TLS door runs as a separate root daemon and keeps its old binary
-until it is restarted:
-
-```sh
-sudo launchctl kickstart -k system/co.sference.switch.tlsdoor
-```
 
 Re-running `curl -fsSL https://get.sference.com | sh` is equivalent to
 `upgrade` and also works.
@@ -328,12 +281,12 @@ sference-switch auth login                 # browser device flow
 sference-switch auth login --api-key 'sk_...'   # static API key, never expires
 ```
 
-**Set up and start** (the app's **Switch** toggle runs the privileged half):
+**Set up and start**:
 
 ```sh
-sference-switch up                         # start the router
-sference-switch setup                      # install & bootstrap the root TLS service
-sudo sference-switch intercept on          # write the /etc/hosts redirect
+sference-switch setup                      # check prerequisites, sign in, init config
+sference-switch up                         # start the router and door
+sference-switch claude on                  # point Claude Code at the gateway
 ```
 
 **Route and inspect:**

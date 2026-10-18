@@ -12,13 +12,13 @@ curl -fsSL https://get.sference.com | sh
 ```
 
 Then open the app. Everything you need is in the UI: sign in (the app runs the
-browser device flow), turn the **Switch** on (one macOS password prompt to
-install the root TLS service and edit `/etc/hosts`), and pick a `[Sference]`
-model in Claude Code's `/model`. No terminal commands are required.
+browser device flow), turn the **Switch** on, and pick a `[Sference]` model in
+Claude Code's `/model`. No terminal commands and no administrator password are
+required.
 
 For scripting and headless machines, the same steps are the app's
 `Command-line reference` in `README.md`:
-`sference-switch up`, `sference-switch setup`, `sudo sference-switch intercept on`,
+`sference-switch setup`, `sference-switch up`, `sference-switch claude on`,
 and `sference-switch auth login` (or `auth login --api-key 'sk_...'`).
 
 ## Direct release asset

@@ -37,7 +37,6 @@ struct RoutingSnapshot: Equatable, Sendable {
     let configPath: String
     let capabilities: Set<String>
     let globalRoutingEnabled: Bool
-    let pickerInjectEnabled: Bool
     let reload: ReloadStatus
     let auth: AuthStatus?
     let clients: [ClientStatus]
@@ -65,7 +64,6 @@ struct RoutingSnapshot: Equatable, Sendable {
         configPath = status.configPath
         capabilities = Set(status.capabilities)
         globalRoutingEnabled = status.globalRoutingEnabled
-        pickerInjectEnabled = status.pickerInjectEnabled
         reload = status.reload
         auth = status.auth
         clients = status.clients
@@ -76,7 +74,6 @@ struct RoutingSnapshot: Equatable, Sendable {
          version: String,
          uptimeSeconds: Int64,
          globalRoutingEnabled: Bool,
-         pickerInjectEnabled: Bool = true,
          auth: AuthStatus?,
          clients: [ClientStatus],
          update: UpdateStatusSnapshot? = nil) {
@@ -91,7 +88,6 @@ struct RoutingSnapshot: Equatable, Sendable {
         configPath = ""
         capabilities = []
         self.globalRoutingEnabled = globalRoutingEnabled
-        self.pickerInjectEnabled = pickerInjectEnabled
         reload = ReloadStatus(state: "", error: "")
         self.auth = auth
         self.clients = clients
@@ -625,7 +621,6 @@ struct AdminStatusSnapshot: Equatable, Sendable {
     var configPath: String
     var reload: ReloadStatus
     var globalRoutingEnabled: Bool
-    var pickerInjectEnabled: Bool
     var auth: AuthStatus?
     var clients: [ClientStatus]
     var update: UpdateStatusSnapshot?
@@ -652,7 +647,6 @@ struct AdminStatusSnapshot: Equatable, Sendable {
             .flatMap(UpdateStatusSnapshot.init)
 
         globalRoutingEnabled = dict["global_routing_enabled"] as? Bool ?? false
-        pickerInjectEnabled = dict["picker_inject_enabled"] as? Bool ?? true
     }
 }
 

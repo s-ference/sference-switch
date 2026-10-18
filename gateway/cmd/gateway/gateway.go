@@ -30,7 +30,6 @@ import (
 	"github.com/sference/sference-switch/gateway/internal/analytics"
 	"github.com/sference/sference-switch/gateway/internal/auth"
 	"github.com/sference/sference-switch/gateway/internal/config"
-	"github.com/sference/sference-switch/gateway/internal/dnsbypass"
 	"github.com/sference/sference-switch/gateway/internal/pidfile"
 	"github.com/sference/sference-switch/gateway/internal/pricing"
 	"github.com/sference/sference-switch/gateway/internal/proxy"
@@ -886,13 +885,6 @@ func (g *Gateway) sferenceAuthClient() (useOAuth bool, client *http.Client, fall
 	return false, nil, false
 }
 
-// interceptedHosts are the hostnames the TLS door intercepts via /etc/hosts.
-// The router's outbound calls to these hosts must bypass the hosts redirect.
-var interceptedHosts = map[string]bool{
-	"api.anthropic.com": true,
-	"api.openai.com":    true,
-}
-
 func defaultTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.MaxIdleConns = 100
@@ -901,35 +893,6 @@ func defaultTransport() *http.Transport {
 		t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	} else if pool, err := x509.SystemCertPool(); err == nil && pool != nil {
 		t.TLSClientConfig = &tls.Config{RootCAs: pool}
-	}
-	// Bypass /etc/hosts for intercepted hosts so native passthrough reaches
-	// the real upstream instead of looping back into the TLS door.
-	//
-	// Go's net.Resolver, even with PreferGo and a custom Dial, still reads
-	// /etc/hosts before DNS — so bypassHostsResolver.LookupHost returns
-	// 127.0.0.1 and the passthrough loops. The raw DNS query in dnsbypass
-	// skips /etc/hosts entirely.
-	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, err
-		}
-		if interceptedHosts[host] {
-			// Fail closed. /etc/hosts points this name at the TLS door, so
-			// dialing the unresolved name would send our own upstream call
-			// back into the door, which forwards it here again — an
-			// interception loop that burns two ephemeral ports per turn and
-			// exhausts the range in seconds (every request then fails with
-			// EADDRNOTAVAIL, including ones that would otherwise succeed).
-			// A refused dial is a recoverable error; the loop is not.
-			ip, err := dnsbypass.ResolveHost(ctx, host)
-			if err != nil {
-				return nil, fmt.Errorf("bypass-resolve %s: %w", host, err)
-			}
-			addr = net.JoinHostPort(ip, port)
-		}
-		d := net.Dialer{Timeout: 30 * time.Second}
-		return d.DialContext(ctx, network, addr)
 	}
 	return t
 }

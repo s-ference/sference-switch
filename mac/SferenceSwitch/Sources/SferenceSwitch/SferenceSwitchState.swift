@@ -89,19 +89,6 @@ final class SferenceSwitchState: ObservableObject {
     @Published private(set) var pendingReasoning: PendingReasoningMutation?
     @Published private(set) var reasoningWarnings: [String: String] = [:]
 
-    // MARK: Proxy (transparent interception) state
-    /// Whether the transparent proxy is enabled: the /etc/hosts block is
-    /// present AND the :443 TLS door daemon is installed. Read from
-    /// `intercept status` (hosts file only, no sudo required) plus the
-    /// daemon presence.
-    @Published private(set) var proxyEnabled = false
-    @Published private(set) var proxyChecking = false
-    @Published private(set) var proxyPending = false
-    /// Transient message shown in the menubar after a proxy toggle. Cleared
-    /// after a few seconds by `clearProxyToggleMessage`.
-    @Published private(set) var proxyToggleMessage: String?
-    private var proxyMessageTask: Task<Void, Never>?
-
     private let reader: any AdminStatusReading
     private let modelCatalogReader: any ModelCatalogReading
     private let reasoningPreflightReader: any ReasoningPreflightReading
@@ -210,14 +197,6 @@ final class SferenceSwitchState: ObservableObject {
                     self?.apply(event)
                 }
             }
-            // Read the intercept state at launch, not just on first menu
-            // open — otherwise the menu renders once with the initial
-            // proxyEnabled=false and shows the sudo warning next to an
-            // already-on toggle. Stable channel only: preview/test fixtures
-            // have no real binary to probe.
-            if variant.channel == .stable {
-                Task { await refreshProxyState() }
-            }
         }
     }
 
@@ -325,13 +304,6 @@ final class SferenceSwitchState: ObservableObject {
     func menuDidShow() {
         menuVisible = true
         requestInteractiveRefresh(includeStats: true)
-        // Only refresh proxy state on the stable channel where a real
-        // binary exists. Preview/test fixtures don't have intercept
-        // installed and the CLI call would pollute the runner's recorded
-        // arguments.
-        if variant.channel == .stable {
-            Task { await refreshProxyState() }
-        }
     }
 
     /// The overview owns the sign-in UI, so it also adopts a pending flow
@@ -526,107 +498,6 @@ final class SferenceSwitchState: ObservableObject {
         return true
     }
 
-    // MARK: - Proxy enable / disable
-
-    /// Returns true if the proxy-change request was accepted and will run
-    /// (including the macOS admin password prompt).
-    func requestProxyEnabled(_ enabled: Bool) -> Bool {
-        guard !proxyPending,
-              proxyEnabled != enabled else {
-            return false
-        }
-        proxyPending = true
-        Task { await setProxyEnabled(enabled) }
-        return true
-    }
-
-    private func setProxyEnabled(_ enabled: Bool) async {
-        defer { proxyPending = false }
-        guard let binary = Self.locateSferenceSwitchBinary(variant: variant) else {
-            lastError = "sference-switch binary not found."
-            return
-        }
-        // Chain both commands into a single osascript call so the user
-        // sees one admin password prompt, not two.
-        let commands: [[String]]
-        if enabled {
-            commands = [
-                ["tls", "service", "install"],
-                ["intercept", "on"],
-            ]
-        } else {
-            commands = [
-                ["intercept", "off"],
-                ["tls", "service", "uninstall"],
-            ]
-        }
-        let result = await runElevatedChained(
-            binary: binary,
-            commands: commands,
-            timeout: 120)
-        if !result.succeeded {
-            lastError = "Proxy change failed: \(result.standardError)"
-            await refreshProxyState()
-            return
-        }
-        await refreshProxyState()
-        setProxyToggleMessage(enabled
-            ? "Switch enabled — restart Claude Code to apply"
-            : "Switch disabled — restart Claude Code to apply")
-    }
-
-    private func setProxyToggleMessage(_ message: String) {
-        proxyToggleMessage = message
-        proxyMessageTask?.cancel()
-        proxyMessageTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run { self?.proxyToggleMessage = nil }
-        }
-    }
-
-    /// Refreshes the proxy-enabled flag in the background without needing
-    /// sudo: `intercept status` reads only the hosts file.
-    ///
-    /// This runs directly via `cliRunner` rather than `executeCLI`, because
-    /// `executeCLI` gates on routing *mutation* rights (`mutationAllowed`),
-    /// which fail when `runtimeTrust` is `.identityMismatch` or `.previewMismatch`
-    /// (e.g. after an ad-hoc re-sign). Reading `/etc/hosts` state is read-only
-    /// and must work regardless of mutation permission — otherwise the switch
-    /// appears to bounce back after a successful enable.
-    func refreshProxyState() async {
-        guard let binary = Self.locateSferenceSwitchBinary(variant: variant) else { return }
-        proxyChecking = true
-        let result = await cliRunner.run(CLIExecutionRequest(
-            binary: binary,
-            arguments: ["intercept", "status"],
-            environment: processEnvironment(),
-            timeout: 5))
-        proxyChecking = false
-        proxyEnabled = result.standardOutput.contains("intercept: on")
-    }
-
-    private func runElevatedChained(
-        binary: URL,
-        commands: [[String]],
-        timeout: TimeInterval
-    ) async -> CLIExecutionResult {
-        // Chain all commands with && into a single shell string, then run
-        // that string via osascript. One admin prompt for all commands.
-        let binaryPath = binary.path
-        let shellParts = commands.map { args in
-            let all = [binaryPath] + args
-            return all.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
-        }
-        let shellCmd = shellParts.joined(separator: " && ")
-        let runner = ElevatedCLIRunner()
-        return await runner.run(CLIExecutionRequest(
-            binary: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", shellCmd],
-            environment: [:],
-            timeout: timeout))
-    }
-
     func setAllRoutesThroughSference(_ enabled: Bool) async {
         guard beginGlobalRouting(enabled) else { return }
         await finishGlobalRouting(enabled)
@@ -782,45 +653,6 @@ final class SferenceSwitchState: ObservableObject {
             key: "codex-route",
             operationID: pending.operationID)
         pendingCodexRoute = nil
-    }
-
-    // MARK: - Picker injection toggle
-
-    @Published var pickerInjectMutationPending = false
-
-    func requestPickerInject(_ enabled: Bool) {
-        guard !pickerInjectMutationPending else { return }
-        pickerInjectMutationPending = true
-        Task {
-            await finishPickerInject(enabled)
-        }
-    }
-
-    private func finishPickerInject(_ enabled: Bool) async {
-        let result = await executeCLI(
-            ["config", "set", "picker_inject", enabled ? "true" : "false"],
-            timeout: 10)
-        logToFile("[finishPickerInject] enabled=\(enabled) succeeded=\(result.succeeded) status=\(result.status) stdout=\(result.standardOutput.prefix(200)) stderr=\(result.standardError.prefix(200))")
-        if !result.succeeded {
-            lastError = "Failed to set picker_inject: \(result.standardError)"
-        }
-        await refresh()
-        pickerInjectMutationPending = false
-    }
-
-    private func logToFile(_ message: String) {
-        let line = "[\(Date().ISO8601Format())] \(message)\n"
-        let path = NSHomeDirectory() + "/.sference/switch/logs/tlsdoor-bootstrap.log"
-        let url = URL(fileURLWithPath: path)
-        if let data = line.data(using: .utf8) {
-            if let h = try? FileHandle(forWritingTo: url) {
-                h.seekToEndOfFile()
-                h.write(data)
-                try? h.close()
-            } else {
-                try? data.write(to: url, options: .atomic)
-            }
-        }
     }
 
     // MARK: - Claude family and subagent configuration
@@ -1746,7 +1578,6 @@ func routingPresentationEqual(_ lhs: RoutingSnapshot,
         && lhs.configPath == rhs.configPath
         && lhs.capabilities == rhs.capabilities
         && lhs.globalRoutingEnabled == rhs.globalRoutingEnabled
-        && lhs.pickerInjectEnabled == rhs.pickerInjectEnabled
         && lhs.reload == rhs.reload
         && lhs.auth == rhs.auth
         && lhs.clients == rhs.clients

@@ -100,7 +100,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         let headerItem = NSMenuItem()
         headerItem.title = "Switch"
-        let toggle = proxyTogglePresentation(
+        let toggle = globalRoutingTogglePresentation(
             state: state,
             isPreviewFixture: isPreview)
         let header = StatusMenuHeaderView(
@@ -111,7 +111,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             switchEnabled: toggle.isEnabled,
             disabledReason: toggle.disabledReason,
             onToggle: { [weak self] enabled in
-                self?.changeProxyEnabled(enabled) ?? false
+                self?.changeGlobalRouting(enabled) ?? false
             })
         headerItem.view = header
         headerView = header
@@ -163,7 +163,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private var headerSubtitle: String {
-        if state.proxyPending {
+        if state.pendingGlobalRouting != nil {
             return "Updating switch…"
         }
         if case .previewMismatch = state.runtimeTrust {
@@ -178,7 +178,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if authNeedsReauth(auth: state.auth) {
             return "Authentication required"
         }
-        return state.proxyEnabled
+        return state.displayedGlobalRoutingEnabled
             ? "Switch enabled"
             : "Switch disabled"
     }
@@ -187,7 +187,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// safe while AppKit tracks the menu. Structure and item geometry remain
     /// untouched, so keyboard selection and submenu placement stay stable.
     private func updateTrackedHeader() {
-        let toggle = proxyTogglePresentation(
+        let toggle = globalRoutingTogglePresentation(
             state: state,
             isPreviewFixture: isPreview)
         headerView?.update(
@@ -220,22 +220,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func addWarnings() {
         var added = false
-
-        if !state.proxyEnabled && !state.proxyPending && !state.proxyChecking {
-            let item = disabledItem(
-                "Enabling the switch requires your macOS password\n" +
-                "(installs a system service and edits /etc/hosts)")
-            item.image = symbol("lock.shield")
-            menu.addItem(item)
-            added = true
-        }
-
-        if let message = state.proxyToggleMessage {
-            let item = disabledItem(message)
-            item.image = symbol("arrow.triangle.2.circlepath")
-            menu.addItem(item)
-            added = true
-        }
 
         if state.snapshotIsStale, state.routingSnapshot != nil {
             let item = disabledItem("Showing Last Confirmed Routing State")
@@ -401,9 +385,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Actions
 
-    private func changeProxyEnabled(_ enabled: Bool) -> Bool {
+    private func changeGlobalRouting(_ enabled: Bool) -> Bool {
         guard !isPreview else { return false }
-        return state.requestProxyEnabled(enabled)
+        return state.requestGlobalRouting(enabled)
     }
 
     @objc private func startSystem() {
@@ -443,9 +427,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func updateIconIfNeeded() {
         let projected: MenubarIconState
-        if state.proxyPending {
+        if state.pendingGlobalRouting != nil {
             projected = .degraded
-        } else if state.proxyEnabled && state.gatewayUp {
+        } else if state.displayedGlobalRoutingEnabled && state.gatewayUp {
             projected = .active
         } else {
             projected = .off
@@ -579,26 +563,6 @@ func globalRoutingTogglePresentation(
                 && state.pendingGlobalRouting == nil),
         accessibilityStatus: status,
         disabledReason: state.routingMutationDisabledReason)
-}
-
-@MainActor
-func proxyTogglePresentation(
-    state: SferenceSwitchState,
-    isPreviewFixture: Bool
-) -> GlobalRoutingTogglePresentation {
-    let status: String
-    if state.proxyPending {
-        status = "Updating"
-    } else if state.proxyChecking {
-        status = "Checking"
-    } else {
-        status = state.proxyEnabled ? "On" : "Off"
-    }
-    return GlobalRoutingTogglePresentation(
-        isOn: state.proxyEnabled,
-        isEnabled: isPreviewFixture || !state.proxyPending,
-        accessibilityStatus: status,
-        disabledReason: nil)
 }
 
 @MainActor

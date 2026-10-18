@@ -108,12 +108,6 @@ func dispatch(args []string) int {
 		return cmdCodex(args[1:])
 	case "menubar":
 		return cmdMenubar(args[1:])
-	case "tls":
-		return cmdTLS(args[1:])
-	case "tlsdoor":
-		return cmdTLSDoor(args[1:])
-	case "intercept":
-		return cmdIntercept(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
 		usage()

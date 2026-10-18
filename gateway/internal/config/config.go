@@ -228,27 +228,12 @@ type Global struct {
 	// the client's fallback_route. Empty or 0 disables it (the shipped
 	// default). Per-client ttft_timeout overrides this value.
 	TTFTTimeout string `yaml:"ttft_timeout,omitempty" json:"ttft_timeout,omitempty"`
-	// PickerInject controls whether the TLS door injects Sference models
-	// into Claude Code's /model picker via the bootstrap response. When
-	// true (the default when model_aliases are configured), the door
-	// intercepts GET /api/claude_cli/bootstrap and appends Sference
-	// models to additional_model_options. When false, the bootstrap
-	// passes through untouched and the picker shows only native models.
-	// Pointer so an absent value defaults to true.
-	PickerInject *bool `yaml:"picker_inject,omitempty" json:"picker_inject,omitempty"`
 }
 
 // IsTelemetryEnabled returns the effective telemetry collection setting.
 // Collection defaults to enabled when the field is absent.
 func IsTelemetryEnabled(global Global) bool {
 	return global.TelemetryEnabled == nil || *global.TelemetryEnabled
-}
-
-// IsPickerInjectEnabled returns the effective picker-injection setting.
-// Defaults to true when the field is absent, so the feature is on by
-// default for installations that configure model_aliases.
-func IsPickerInjectEnabled(global Global) bool {
-	return global.PickerInject == nil || *global.PickerInject
 }
 
 const DefaultTelemetryRetentionDays = 90
