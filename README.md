@@ -21,14 +21,16 @@ curl -fsSL https://get.sference.com | sh
 This downloads the latest release, verifies the checksum, and installs the CLI
 to `~/.local/bin` and the menubar app to `~/Applications`. No Homebrew required.
 
-Then open the app and do three things — no terminal commands needed:
+Then open the app for the first two steps; the third is one terminal command:
 
 1. **Sign in** with your Sference account. The app shows the device-flow
    verification code and opens the approval page (Account card → Sign In).
 2. **Turn routing on** with the **Switch** toggle. It flips the global routing
    switch: off is native passthrough, on applies your saved model mappings.
-3. **Pick a model.** In Claude Code, `/model` lists `[Sference]` entries.
-   Choose the `… (1M context)` variant of a 1M model to use its full window.
+3. **Connect Claude Code** by running `sference-switch claude on` once (see
+   [How Claude Code is connected](#how-claude-code-is-connected)). Then
+   `/model` lists `[Sference]` entries — choose the `… (1M context)` variant
+   of a 1M model to use its full window.
 
 The app is the primary interface; the equivalent terminal commands, for
 scripting and headless machines, are collected in the

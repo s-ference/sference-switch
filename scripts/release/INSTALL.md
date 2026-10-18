@@ -11,10 +11,10 @@ and installs the CLI and menubar app:
 curl -fsSL https://get.sference.com | sh
 ```
 
-Then open the app. Everything you need is in the UI: sign in (the app runs the
-browser device flow), turn the **Switch** on, and pick a `[Sference]` model in
-Claude Code's `/model`. No terminal commands and no administrator password are
-required.
+Then open the app. Sign in (the app runs the browser device flow) and turn the
+**Switch** on — no administrator password needed. One terminal command finishes
+the setup: `sference-switch claude on` points Claude Code at the gateway so
+`/model` lists the `[Sference]` models.
 
 For scripting and headless machines, the same steps are the app's
 `Command-line reference` in `README.md`:

@@ -471,8 +471,11 @@ type claudeBackup struct {
 	EnvExisted   bool              `json:"env_existed"`
 	Model        string            `json:"model,omitempty"`
 	ModelMissing bool              `json:"model_missing"`
-	Existed      bool              `json:"existed"`
-	WrittenHash  string            `json:"written_hash"`
+	// PrimedBaseURL is the gateway URL the picker cache was primed for,
+	// so off can remove that cache even after the door port changed.
+	PrimedBaseURL string `json:"primed_base_url,omitempty"`
+	Existed       bool   `json:"existed"`
+	WrittenHash   string `json:"written_hash"`
 }
 
 // claudeBackupPath keys the backup file by sha256(settings path) so
@@ -642,12 +645,32 @@ func (a *claudeAdapter) primeGatewayModelsCache() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, raw, 0o600)
+	// Temp+rename: a Claude Code starting mid-prime must never read a
+	// torn cache (same discipline as the settings write).
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".gateway-models-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(raw); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // unprimeGatewayModelsCache removes the picker cache when it belongs to this
-// gateway (base URL points at us); a foreign cache is left alone.
-func (a *claudeAdapter) unprimeGatewayModelsCache() {
+// gateway: its base URL points at a current gateway port, or matches the URL
+// recorded in the backup at on-time (the door port may have changed since).
+// A foreign cache is left alone.
+func (a *claudeAdapter) unprimeGatewayModelsCache(bak *claudeBackup) {
 	path := gatewayModelsCachePath()
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -657,7 +680,9 @@ func (a *claudeAdapter) unprimeGatewayModelsCache() {
 	if err := json.Unmarshal(raw, &cache); err != nil {
 		return
 	}
-	if !a.isGatewayURL(cache.BaseURL) {
+	ours := a.isGatewayURL(cache.BaseURL) ||
+		(bak != nil && bak.PrimedBaseURL != "" && cache.BaseURL == bak.PrimedBaseURL)
+	if !ours {
 		return
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -712,11 +737,12 @@ func (a *claudeAdapter) on() int {
 	var nb *claudeBackup
 	if bak == nil && !managed {
 		nb = &claudeBackup{
-			ConfigPath:  a.settingsPath,
-			Values:      map[string]string{},
-			EnvExisted:  envExistedPre,
-			Existed:     existed,
-			WrittenHash: sha256Hex(raw),
+			ConfigPath:    a.settingsPath,
+			Values:        map[string]string{},
+			EnvExisted:    envExistedPre,
+			Existed:       existed,
+			WrittenHash:   sha256Hex(raw),
+			PrimedBaseURL: desired,
 		}
 		recordBackupKey(nb, claudeManagedEnvKey, cur, curSet)
 		recordBackupKey(nb, claudeDiscoveryEnvKey, discCur, discCurSet)
@@ -740,7 +766,18 @@ func (a *claudeAdapter) on() int {
 			extended = true
 		}
 		if !backupCovers(bak, claudeDiscoveryEnvKey) {
-			recordBackupKey(bak, claudeDiscoveryEnvKey, discCur, discCurSet)
+			// Already managed means the current value is one WE wrote;
+			// recording it as the restore value would resurrect the flag
+			// on off. Record it as missing instead.
+			if managed && a.ownedEnvValue(claudeDiscoveryEnvKey, discCur) {
+				recordBackupKey(bak, claudeDiscoveryEnvKey, "", false)
+			} else {
+				recordBackupKey(bak, claudeDiscoveryEnvKey, discCur, discCurSet)
+			}
+			extended = true
+		}
+		if bak.PrimedBaseURL == "" {
+			bak.PrimedBaseURL = desired
 			extended = true
 		}
 		if extended {
@@ -916,7 +953,7 @@ func (a *claudeAdapter) off() int {
 	}
 	a.fixModelAlias(root, bak)
 
-	a.unprimeGatewayModelsCache()
+	a.unprimeGatewayModelsCache(bak)
 	if !bak.Existed && len(root) == 0 {
 		if err := os.Remove(a.settingsPath); err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(a.out, "claude off: remove %s: %v\n", a.settingsPath, err)
@@ -975,7 +1012,7 @@ func (a *claudeAdapter) offStripOnly(root map[string]any, existed bool, bak *cla
 			return 1
 		}
 	}
-	a.unprimeGatewayModelsCache()
+	a.unprimeGatewayModelsCache(bak)
 	if bak != nil {
 		if err := os.Remove(a.backupPath); err != nil {
 			fmt.Fprintf(a.out, "claude off: remove backup: %v\n", err)

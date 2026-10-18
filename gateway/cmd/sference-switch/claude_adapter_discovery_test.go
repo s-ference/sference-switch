@@ -147,3 +147,94 @@ func TestClaudeDiscoveryFlagBackupIsNotPoison(t *testing.T) {
 		t.Errorf("a backed-up discovery flag must not poison the restore (it is inert without the gateway)")
 	}
 }
+
+// A user-set "0" is a deliberate opt-out: on() still wires (the flag is
+// required for the picker) but off() must restore their value.
+func TestClaudeOffRestoresUserDiscoveryZero(t *testing.T) {
+	a := primeAdapter(t, primeModelsPayload)
+	writeSettingsFile(t, a, `{"env":{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"0"}}`)
+	if code := a.on(); code != 0 {
+		t.Fatal("on failed")
+	}
+	if v, _ := envValue(t, a.settingsPath, claudeDiscoveryEnvKey); v != "1" {
+		t.Fatalf("on did not enable discovery: %q", v)
+	}
+	if code := a.off(); code != 0 {
+		t.Fatal("off failed")
+	}
+	if v, ok := envValue(t, a.settingsPath, claudeDiscoveryEnvKey); !ok || v != "0" {
+		t.Errorf("user's \"0\" not restored: %q ok=%v", v, ok)
+	}
+}
+
+// The managed-extension path: a second on() while already managed must not
+// record the switch-written "1" as the restore value — off() strips, never
+// resurrects our own flag.
+func TestClaudeOnWhileManagedDoesNotResurrectFlagOnOff(t *testing.T) {
+	a := primeAdapter(t, primeModelsPayload)
+	writeSettingsFile(t, a, `{"env":{}}`)
+	if code := a.on(); code != 0 {
+		t.Fatal("first on failed")
+	}
+	if code := a.on(); code != 0 {
+		t.Fatal("second on failed")
+	}
+	bak, err := loadClaudeBackup(a.backupPath)
+	if err != nil || bak == nil {
+		t.Fatalf("backup: %v %v", bak, err)
+	}
+	if v, ok := bak.Values[claudeDiscoveryEnvKey]; ok {
+		t.Errorf("backup recorded our own flag value %q as restore state", v)
+	}
+	if code := a.off(); code != 0 {
+		t.Fatal("off failed")
+	}
+	if _, ok := envValue(t, a.settingsPath, claudeDiscoveryEnvKey); ok {
+		t.Errorf("switch-written discovery flag resurrected by off")
+	}
+}
+
+// An empty catalog primes an empty cache without error; no temp file is
+// left behind by the atomic write.
+func TestClaudePrimeEmptyCatalog(t *testing.T) {
+	a := primeAdapter(t, `{"data":[]}`)
+	writeSettingsFile(t, a, `{"env":{}}`)
+	if code := a.on(); code != 0 {
+		t.Fatal("on failed")
+	}
+	cache := readCache(t)
+	if len(cache.Models) != 0 {
+		t.Errorf("empty catalog primed %d models", len(cache.Models))
+	}
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(gatewayModelsCachePath()), ".gateway-models-*.tmp"))
+	if err != nil || len(matches) != 0 {
+		t.Errorf("temp files left behind: %v %v", matches, err)
+	}
+}
+
+// A cache primed for a door port that has since changed is still ours:
+// the backup's recorded URL removes it on off.
+func TestClaudeOffRemovesCacheForOldPort(t *testing.T) {
+	a := primeAdapter(t, primeModelsPayload)
+	writeSettingsFile(t, a, `{"env":{}}`)
+	if code := a.on(); code != 0 {
+		t.Fatal("on failed")
+	}
+	// The door moved: the cache's baseUrl no longer matches any gateway
+	// port, but the backup remembers it.
+	bak, err := loadClaudeBackup(a.backupPath)
+	if err != nil || bak == nil {
+		t.Fatalf("backup: %v %v", bak, err)
+	}
+	if bak.PrimedBaseURL == "" {
+		t.Fatal("backup did not record the primed base URL")
+	}
+	a.gatewayPorts = map[string]bool{"59999": true}
+	a.desiredPort = "59999"
+	if code := a.off(); code != 0 {
+		t.Fatal("off failed")
+	}
+	if _, err := os.Stat(gatewayModelsCachePath()); !os.IsNotExist(err) {
+		t.Errorf("cache for the old port survived off")
+	}
+}

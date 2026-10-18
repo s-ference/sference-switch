@@ -228,6 +228,11 @@ type Global struct {
 	// the client's fallback_route. Empty or 0 disables it (the shipped
 	// default). Per-client ttft_timeout overrides this value.
 	TTFTTimeout string `yaml:"ttft_timeout,omitempty" json:"ttft_timeout,omitempty"`
+	// PickerInject is DEPRECATED and inert: it controlled the removed
+	// TLS door's bootstrap injection. The field stays so pre-removal
+	// configs keep parsing under the strict unmarshal; nothing reads it.
+	// Slated for deletion in a later release.
+	PickerInject *bool `yaml:"picker_inject,omitempty" json:"picker_inject,omitempty"`
 }
 
 // IsTelemetryEnabled returns the effective telemetry collection setting.

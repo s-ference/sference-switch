@@ -552,17 +552,24 @@ func globalRoutingTogglePresentation(
     if state.pendingGlobalRouting != nil {
         status = "Applying"
     } else if !isPreviewFixture && !state.canMutateRouting {
-        status = "Unavailable"
+        // The toggle still works: requestGlobalRouting falls back to the
+        // CLI's direct config write when the journaled path is
+        // unavailable (gateway down, snapshot stale).
+        status = (state.displayedGlobalRoutingEnabled ? "On" : "Off") + " (limited)"
     } else {
         status = state.displayedGlobalRoutingEnabled ? "On" : "Off"
     }
     return GlobalRoutingTogglePresentation(
         isOn: state.displayedGlobalRoutingEnabled,
         isEnabled: isPreviewFixture
-            || (state.canMutateRouting
-                && state.pendingGlobalRouting == nil),
+            || state.pendingGlobalRouting == nil,
         accessibilityStatus: status,
-        disabledReason: state.routingMutationDisabledReason)
+        // The offline fallback keeps the toggle usable, so the
+        // journaled-path reason ("gateway unavailable") is no longer a
+        // *disabled* reason; only a pending mutation disables.
+        disabledReason: state.pendingGlobalRouting != nil
+            ? state.routingMutationDisabledReason
+            : nil)
 }
 
 @MainActor

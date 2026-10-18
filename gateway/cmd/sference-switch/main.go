@@ -108,6 +108,8 @@ func dispatch(args []string) int {
 		return cmdCodex(args[1:])
 	case "menubar":
 		return cmdMenubar(args[1:])
+	case "hosts-clean":
+		return cmdHostsClean(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
 		usage()

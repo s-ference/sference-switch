@@ -493,8 +493,39 @@ final class SferenceSwitchState: ObservableObject {
 
     @discardableResult
     func requestGlobalRouting(_ enabled: Bool) -> Bool {
-        guard beginGlobalRouting(enabled) else { return false }
-        Task { await finishGlobalRouting(enabled) }
+        if canMutateRouting {
+            guard beginGlobalRouting(enabled) else { return false }
+            Task { await finishGlobalRouting(enabled) }
+            return true
+        }
+        return requestGlobalRoutingOffline(enabled)
+    }
+
+    /// Fallback when the journaled path is unavailable (gateway down,
+    /// snapshot stale): the CLI's on/off writes the same config file
+    /// directly and SIGHUPs the router when it is alive, so the change
+    /// applies immediately or on next start. Without this the Switch was
+    /// dead exactly when a user reaching for it most — gateway down.
+    private func requestGlobalRoutingOffline(_ enabled: Bool) -> Bool {
+        guard pendingGlobalRouting == nil,
+              let binary = Self.locateSferenceSwitchBinary(variant: variant) else { return false }
+        pendingGlobalRouting = PendingGlobalRouting(
+            operationID: UUID().uuidString.lowercased(),
+            requested: enabled,
+            phase: .applying)
+        Task {
+            let result = await cliRunner.run(CLIExecutionRequest(
+                binary: binary,
+                arguments: [enabled ? "on" : "off"],
+                environment: processEnvironment(),
+                timeout: 15))
+            await refresh()
+            if !result.succeeded {
+                lastError = menuErrorLabel(
+                    redactDiagnosticText(result.standardError), limit: 180)
+            }
+            pendingGlobalRouting = nil
+        }
         return true
     }
 
