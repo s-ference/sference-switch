@@ -103,9 +103,9 @@ The menu bar app is the primary interface for daily use. It provides:
 - actions to start the system and run it at login.
 
 After an upgrade, the app's **Update & Restart** action adopts the new CLI and
-app version and restarts the system (with one macOS password prompt to
-kick the root TLS door). `sference-switch up` is the equivalent from a
-terminal; run `sference-switch menubar` when you only need to install, refresh,
+app version and restarts the system. It runs `sference-switch upgrade --restart`
+and needs no administrator password. `sference-switch up` is the equivalent
+from a terminal; run `sference-switch menubar` when you only need to install, refresh,
 or reopen the app from the currently installed package.
 
 The app and CLI update the same configuration. You can use either interface
